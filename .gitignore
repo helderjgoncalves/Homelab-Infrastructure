@@ -1,0 +1,259 @@
+# =============================================================================
+# Homelab Infrastructure — .gitignore
+# =============================================================================
+# Goal: track declarative config in Git, never track secrets, runtime data,
+# generated artifacts, or per-host noise.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Secrets & credentials (NEVER commit)
+# -----------------------------------------------------------------------------
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.*.sample
+
+# Generic secret stores
+secrets/
+secret/
+*.secret
+*.secrets
+*_secret
+*_secrets
+credentials.*
+*.credentials
+
+# Keys, certs, tokens
+*.pem
+*.key
+*.crt
+*.cer
+*.csr
+*.der
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.ppk
+known_hosts
+authorized_keys
+
+# Cloudflare Tunnel
+*.cloudflared.json
+cert.pem
+tunnel-*.json
+cloudflared/credentials/
+cloudflared/*.json
+!cloudflared/config.yml
+!cloudflared/config.yaml
+!cloudflared/*.example.*
+
+# Tailscale / WireGuard / VPN
+*.conf.local
+wg*.conf
+!wg*.example.conf
+tailscale.state
+
+# OAuth / API tokens
+*.token
+*_token
+*_token.txt
+
+# -----------------------------------------------------------------------------
+# Service runtime data & volumes (host-bound, not config)
+# -----------------------------------------------------------------------------
+# Generic data / volume mount points used by docker-compose
+data/
+volumes/
+appdata/
+**/data/
+**/volumes/
+**/appdata/
+**/config/db/
+**/config/cache/
+**/config/logs/
+
+# Pi-hole runtime
+**/pihole/etc-pihole/
+**/pihole/etc-dnsmasq.d/
+**/pihole/var-log/
+
+# Reverse proxy runtime artifacts
+**/traefik/acme.json
+**/traefik/letsencrypt/
+**/caddy/data/
+**/caddy/config/
+**/nginx/letsencrypt/
+**/npm/data/
+**/npm/letsencrypt/
+
+# Immich
+**/immich/upload/
+**/immich/library/
+**/immich/thumbs/
+**/immich/encoded-video/
+**/immich/profile/
+**/immich/postgres/
+
+# OpenCloud / Nextcloud-likes
+**/opencloud/data/
+**/opencloud/files/
+**/nextcloud/data/
+
+# Portainer
+**/portainer/data/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.rdb
+dump.rdb
+
+# Logs
+*.log
+logs/
+**/logs/
+*.log.*
+*.gz
+*.zip
+
+# Backups
+*.bak
+*.backup
+*.old
+*.orig
+backup/
+backups/
+*.dump
+*.sql.gz
+
+# -----------------------------------------------------------------------------
+# Infrastructure-as-code state & caches
+# -----------------------------------------------------------------------------
+# Terraform / OpenTofu
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Ansible
+*.retry
+.ansible/
+ansible/.vault_pass
+ansible/vault_pass
+ansible/*.vault
+ansible/inventory.local
+ansible/host_vars/*.local.yml
+ansible/group_vars/*.local.yml
+
+# Helm / Kubernetes (if/when added)
+charts/*.tgz
+**/charts/*.tgz
+kubeconfig
+*.kubeconfig
+
+# SOPS / age (allow encrypted, ignore plaintext fallbacks)
+*.dec
+*.dec.*
+.sops.plain.*
+
+# -----------------------------------------------------------------------------
+# Tooling, languages, build artifacts
+# -----------------------------------------------------------------------------
+# Python (scripts, tooling)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node (dashboards, scripts)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+dist/
+build/
+
+# Go
+bin/
+pkg/
+
+# -----------------------------------------------------------------------------
+# Editors & OS noise
+# -----------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# Linux
+*~
+.Trash-*
+.directory
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# JetBrains
+.idea/
+*.iml
+
+# VS Code (allow shared settings, ignore local)
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.history/
+
+# Vim / Emacs
+*.swp
+*.swo
+*~
+\#*\#
+.\#*
+
+# Direnv
+.envrc.local
+.direnv/
+
+# -----------------------------------------------------------------------------
+# Misc
+# -----------------------------------------------------------------------------
+tmp/
+temp/
+.cache/
+*.tmp
+*.temp
