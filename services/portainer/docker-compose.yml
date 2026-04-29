@@ -1,0 +1,26 @@
+# Portainer is the carve-out in this repo: it manages every other stack,
+# so it cannot manage itself. Deploy from the NAS shell:
+#
+#   cd services/portainer
+#   ./bootstrap.sh           # first time only: creates the portainer_data volume
+#   docker compose up -d
+#
+# Do NOT register this stack inside Portainer.
+
+services:
+  portainer:
+    image: portainer/portainer-ce:lts
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - '9443:9443' # HTTPS UI
+      # - '8000:8000' # Edge agent tunnel (only needed for remote endpoints)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+
+volumes:
+  # Reuses the pre-existing named volume created when Portainer was first
+  # installed. `external: true` tells Compose "do not create — already exists".
+  portainer_data:
+    external: true

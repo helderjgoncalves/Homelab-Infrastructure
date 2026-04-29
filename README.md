@@ -26,7 +26,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 ### Foundations
 - [x] Repository initialised (`.gitignore`, `.gitattributes`, `README.md`)
-- [ ] Folder layout scaffolded (`services/`, `ingress/`, `dns/`, `access/`, `observability/`, `infra/`, `scripts/`)
+- [~] Folder layout scaffolded — `services/`, `ingress/` exist; `dns/`, `access/`, `observability/`, `infra/`, `scripts/` pending
 - [ ] `docs/` with architecture diagram and ADR template
 - [ ] Secret-handling convention documented (`*.example` files, secret store of record)
 - [ ] Contributing / change-management notes
@@ -34,16 +34,16 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 ### Host & orchestration
 - [ ] NAS bootstrap notes (`infra/nas/`)
 - [ ] Docker / Compose baseline (versions, networks, common labels)
-- [ ] Portainer stack definition versioned
 
 ### Services
 - [ ] Immich (`services/immich/`)
 - [ ] OpenCloud (`services/opencloud/`)
-- [ ] Portainer (`services/portainer/`)
+- [x] Portainer (`services/portainer/`)
 
 ### Ingress
-- [ ] Cloudflare Tunnel config (`ingress/cloudflared/`)
-- [ ] Reverse proxy: routing rules
+- [x] Cloudflare Tunnel config (`ingress/cloudflared/`)
+- [x] Reverse proxy deployment — Nginx Proxy Manager (`ingress/reverse-proxy/`)
+- [ ] Reverse proxy: routing rules *(NPM stores these in SQLite, not in Git)*
 - [ ] Reverse proxy: TLS config (internal HTTPS everywhere)
 - [ ] Reverse proxy: shared middlewares (auth, rate-limit, headers)
 
@@ -172,16 +172,18 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 ├── services/                  # one folder per stack, each is self-contained
 │   ├── immich/
 │   │   ├── docker-compose.yml
-│   │   ├── .env.example
-│   │   └── README.md
+│   │   └── .env.example
 │   ├── opencloud/
 │   ├── portainer/
 │   └── …
 │
 ├── ingress/
-│   ├── cloudflared/           # tunnel config (no credentials)
-│   │   └── config.example.yml
-│   └── reverse-proxy/         # routing rules, middlewares, TLS config
+│   ├── cloudflared/           # Cloudflare Tunnel (token-based; routes in CF dashboard)
+│   │   ├── docker-compose.yml
+│   │   └── .env.example
+│   └── reverse-proxy/         # NPM container (rules/TLS live in NPM's SQLite, not Git)
+│       ├── docker-compose.yml
+│       └── .env.example
 │
 ├── dns/
 │   └── pihole/                # local DNS rewrites, blocklists, custom records
