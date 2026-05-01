@@ -39,6 +39,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [x] Immich (`services/immich/`)
 - [ ] OpenCloud (`services/opencloud/`)
 - [x] Portainer (`services/portainer/`)
+- [x] qBittorrent (`services/qbittorrent/`)
 
 ### Ingress
 - [x] Cloudflare Tunnel config (`ingress/cloudflared/`)

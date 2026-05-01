@@ -1,0 +1,46 @@
+# qBittorrent (linuxserver image)
+# -----------------------------------------------------------------------------
+# Single-purpose torrent client. Downloads land directly in QBT_DOWNLOADS_DIR;
+# no separate "completed" / "incomplete" / move-on-finish dance. Other media
+# trees (Music, Movies, TV) are intentionally NOT mounted — qBittorrent has no
+# business writing to them.
+#
+# Network model:
+#   - WebUI is bound to 127.0.0.1 only. Public access goes through the reverse
+#     proxy (NPM) and Cloudflare Access, same as every other UI in this repo.
+#     Hitting the NAS directly on the LAN won't reach it either; that's the
+#     point — no path bypasses the auth chain.
+#   - The torrenting port is exposed on all interfaces (0.0.0.0). Peer
+#     connections are direct TCP/UDP and don't go through Cloudflare Tunnel,
+#     so this port still needs a router-level forward to be reachable
+#     inbound. Outbound peer connections work either way.
+
+name: qbittorrent
+
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PGID=100
+      - UMASK=002
+      - TZ=Europe/London
+      - WEBUI_PORT=9080
+      - TORRENTING_PORT=51513
+    volumes:
+      # qBittorrent state (settings, .torrent files, resume data) — SSD.
+      - '${QBT_CONFIG_DIR}:/config'
+      # Downloads destination — typically the big HDD share.
+      - '${QBT_DOWNLOADS_DIR}:/downloads'
+    ports:
+      # WebUI: loopback only; reachable from NPM (network_mode: host).
+      - '127.0.0.1:9080:9080'
+      # Torrenting: must be reachable from peers (TCP + UDP).
+      - '51513:51513'
+      - '51513:51513/udp'
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
