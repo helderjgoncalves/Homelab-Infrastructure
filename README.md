@@ -48,9 +48,9 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [ ] Reverse proxy: shared middlewares (auth, rate-limit, headers)
 
 ### DNS
-- [ ] Pi-hole deployment (`dns/pihole/`)
-- [ ] Local DNS rewrites (public hostnames → internal proxy) tracked in Git
-- [ ] Blocklists / allowlists tracked in Git
+- [x] Pi-hole deployment (`dns/pihole/`)
+- [ ] Local DNS rewrites (public hostnames → internal proxy) tracked in Git *(live in `pihole.toml`; capture pending)*
+- [~] Blocklists / allowlists tracked in Git — adlists + deny-exact + deny-regex snapshotted in `dns/pihole/lists.yaml`; allow entries and groups still pending; no sync script yet
 
 ### Security (zero-trust)
 - [ ] Cloudflare Access apps & policies as code (`access/cloudflare/`)

@@ -1,0 +1,80 @@
+# Pi-hole — gravity.db snapshot (manifest)
+# -----------------------------------------------------------------------------
+# Git-versioned backup / change log of Pi-hole's user-managed list state, so
+# nothing is ever silently lost. Source of truth today is still Pi-hole's UI;
+# this file is the audit log.
+#
+# Restore on a fresh Pi-hole (today, manual):
+#   - Settings -> Lists           : re-add each adlist URL
+#   - Domains                     : re-add deny / allow entries by type
+#
+# Restore on a fresh Pi-hole (future, scripted): a sync script will reconcile
+# this file against gravity.db via the v6 REST API
+# (POST /api/lists, POST /api/domains, ...).
+#
+# Captured 2026-04-30. Re-snapshot whenever you change anything via the UI.
+#
+# Scope captured so far:
+#   - adlists           (gravity.db `adlist` table)
+#   - deny_exact        (gravity.db `domainlist` table, type=0)
+#   - deny_regex        (gravity.db `domainlist` table, type=2)
+#
+# Not yet captured:
+#   - allow_exact / allow_regex
+#   - groups, clients, group/client assignments
+#   - DNS rewrites + CNAMEs (live in `pihole.toml`, captured separately later)
+# -----------------------------------------------------------------------------
+
+# ----- Subscribed blocklists (Settings -> Lists) -----------------------------
+adlists:
+  - url: https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+    enabled: true
+    comment: Steven Black's Unified Hosts
+
+  - url: https://raw.githubusercontent.com/StevenBlack/hosts/master/extensions/fakenews/hosts
+    enabled: true
+    comment: Steven Black — Fake News Hosts
+
+  - url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_59.txt
+    enabled: true
+    comment: AdGuard DNS Popup Hosts filter
+
+  - url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_12.txt
+    enabled: true
+    # TODO verify against UI — comment was truncated in the source screenshot
+    comment: Dandelion Sprout's Anti-Push Notifications List
+
+  - url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_11.txt
+    enabled: true
+    comment: Malicious URL Blocklist (Curben)
+
+  - url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_30.txt
+    enabled: true
+    comment: Phishing URL Blocklist (Curben)
+
+  - url: https://big.oisd.nl/
+    enabled: true
+    comment: OISD Big
+
+  - url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.txt
+    enabled: true
+    comment: HaGeZi Multi Pro
+
+  - url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/tif.txt
+    enabled: true
+    comment: HaGeZi Threat Intelligence Feeds
+
+  - url: https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV.txt
+    enabled: true
+    comment: Perflyst SmartTV Blocklist
+
+# ----- Exact-match deny domains (Domains page, Type: Exact deny) -------------
+deny_exact:
+  - domain: tracker1.bt.moack.co.kr
+    enabled: true
+
+# ----- Regex deny patterns (Domains page, Type: Regex deny) ------------------
+deny_regex:
+  - pattern: tracker\..*
+    enabled: true
+
