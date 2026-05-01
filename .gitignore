@@ -16,6 +16,10 @@
 !.env.sample
 !.env.*.sample
 
+# Portainer-style env file (auto-created by Portainer from stack env vars)
+stack.env
+!stack.env.example
+
 # Generic secret stores
 secrets/
 secret/

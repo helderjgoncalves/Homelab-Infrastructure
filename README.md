@@ -36,7 +36,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [ ] Docker / Compose baseline (versions, networks, common labels)
 
 ### Services
-- [ ] Immich (`services/immich/`)
+- [x] Immich (`services/immich/`)
 - [ ] OpenCloud (`services/opencloud/`)
 - [x] Portainer (`services/portainer/`)
 
