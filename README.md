@@ -26,7 +26,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 ### Foundations
 - [x] Repository initialised (`.gitignore`, `.gitattributes`, `README.md`)
-- [~] Folder layout scaffolded — `services/`, `ingress/` exist; `dns/`, `access/`, `observability/`, `infra/`, `scripts/` pending
+- [~] Folder layout scaffolded — `services/`, `ingress/`, `dns/`, `observability/` exist; `access/`, `infra/`, `scripts/` pending
 - [ ] `docs/` with architecture diagram and ADR template
 - [ ] Secret-handling convention documented (`*.example` files, secret store of record)
 - [ ] Contributing / change-management notes
@@ -62,7 +62,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 - [ ] HTTPS everywhere — no plaintext hop in the path
 
 ### Observability
-- [ ] Uptime monitoring (internal + external probes)
+- [~] Uptime monitoring — Uptime Kuma deployed (`observability/uptime/`); internal probes only, external probes pending
 - [ ] Centralised logging stack
 - [ ] Metrics & dashboards
 - [ ] Alerting routes (who gets paged, how)
