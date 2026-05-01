@@ -1,0 +1,21 @@
+services:
+  devbox:
+    image: devbox:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USERNAME: dev
+        USER_UID: 1000
+        USER_GID: 1000
+    container_name: devbox
+    hostname: devbox
+    restart: unless-stopped
+    ports:
+      - "2222:22"
+    volumes:
+      - ./home:/home/dev
+      - ..:/projects
+      - /share:/share
+    environment:
+      - TZ=Europe/Lisbon
