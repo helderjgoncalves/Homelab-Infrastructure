@@ -12,7 +12,7 @@
 #   - Hardware acceleration left enabled for Intel iGPU (/dev/dri) and the
 #     OpenVINO ML image variant.
 #
-# env_file: stack.env  is Portainer's convention (Portainer auto-creates the
+# env_file: stack.env  is the Dockge convention (Dockge auto-creates the
 # file from the stack environment-variables UI). For shell deploys, copy
 # stack.env.example to stack.env in this directory.
 

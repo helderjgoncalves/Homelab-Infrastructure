@@ -21,7 +21,7 @@ services:
       DISABLE_IPV6: 'true'
 
     volumes:
-      # Host base path supplied via .env (or Portainer stack environment
+      # Host base path supplied via .env (or Dockge stack environment
       # variables) so the compose file stays host-agnostic.
       - '${NPM_DIR}/data:/data'
       - '${NPM_DIR}/letsencrypt:/etc/letsencrypt'

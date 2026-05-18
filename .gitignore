@@ -16,7 +16,7 @@
 !.env.sample
 !.env.*.sample
 
-# Portainer-style env file (auto-created by Portainer from stack env vars)
+# Dockge-style stack env file (auto-created by the UI from stack env vars)
 stack.env
 !stack.env.example
 
@@ -111,9 +111,6 @@ appdata/
 **/opencloud/data/
 **/opencloud/files/
 **/nextcloud/data/
-
-# Portainer
-**/portainer/data/
 
 # Databases
 *.db
