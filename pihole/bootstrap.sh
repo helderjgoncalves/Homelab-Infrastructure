@@ -95,12 +95,28 @@ PIHOLE_PARENT_IFACE="${PIHOLE_PARENT_IFACE}"
 PIHOLE_SHIM_IP="${PIHOLE_SHIM_IP}"
 PIHOLE_IP="${PIHOLE_IP}"
 
+# Wait for parent interface to be ready
+for i in $(seq 1 40); do
+  ip link show "\${PIHOLE_PARENT_IFACE}" >/dev/null 2>&1 && break
+  echo "Waiting for \${PIHOLE_PARENT_IFACE}... attempt ${i}"
+  sleep 3
+done
+
+# Wait for Docker to be ready
+for i in $(seq 1 40); do
+  docker info >/dev/null 2>&1 && break
+  echo "Waiting for Docker... attempt ${i}"
+  sleep 3
+done
+
 if ! ip link show "\${SHIM_IFACE}" >/dev/null 2>&1; then
   ip link add "\${SHIM_IFACE}" link "\${PIHOLE_PARENT_IFACE}" type macvlan mode bridge
   ip addr add "\${PIHOLE_SHIM_IP}/32" dev "\${SHIM_IFACE}"
   ip link set "\${SHIM_IFACE}" up
   ip route add "\${PIHOLE_IP}/32" dev "\${SHIM_IFACE}"
 fi
+
+echo "nameserver \${PIHOLE_IP}" > /etc/resolv.conf
 EOF
 
 chmod +x "${AUTORUN_FILE}"

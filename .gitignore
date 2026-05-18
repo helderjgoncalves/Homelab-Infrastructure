@@ -106,11 +106,26 @@ appdata/
 **/immich/encoded-video/
 **/immich/profile/
 **/immich/postgres/
+**/immich-app/upload/
+**/immich-app/library/
+**/immich-app/thumbs/
+**/immich-app/encoded-video/
+**/immich-app/profile/
+**/immich-app/postgres/
+**/immich-app/backups/
 
 # OpenCloud / Nextcloud-likes
 **/opencloud/data/
 **/opencloud/files/
+**/opencloud/app/
+**/opencloud/certs/
+**/opencloud/.git/
 **/nextcloud/data/
+
+# Beszel runtime
+**/beszel/data/
+**/beszel/agent_data/
+**/beszel/socket/
 
 # Databases
 *.db
@@ -258,3 +273,24 @@ temp/
 .cache/
 *.tmp
 *.temp
+
+# Devbox runtime (container home is bind-mounted)
+**/devbox/home/
+
+# Uptime Kuma runtime
+**/uptime-kuma/db-config.json
+**/uptime-kuma/kuma.db*
+**/uptime-kuma/docker-tls/
+**/uptime-kuma/upload/
+**/uptime-kuma/screenshots/
+
+# macOS noise
+.DS_Store
+
+# QNAP NAS system folders
+@Recently-Snapshot/
+@Recycle/
+.streams/
+
+# Container Station system data
+container-station-data/
