@@ -3,4 +3,6 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: cloudflare-tunnel
     restart: unless-stopped
+    dns:
+      - ${LAN_DNS_IP}
     command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}

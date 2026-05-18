@@ -106,13 +106,7 @@ appdata/
 **/immich/encoded-video/
 **/immich/profile/
 **/immich/postgres/
-**/immich-app/upload/
-**/immich-app/library/
-**/immich-app/thumbs/
-**/immich-app/encoded-video/
-**/immich-app/profile/
-**/immich-app/postgres/
-**/immich-app/backups/
+**/immich/backups/
 
 # OpenCloud / Nextcloud-likes
 **/opencloud/data/

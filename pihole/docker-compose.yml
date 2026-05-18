@@ -23,8 +23,10 @@ services:
       - "80:80/tcp"
       - "443:443/tcp"
       #- "67:67/udp" # uncomment if running Pi-hole as DHCP server
+    env_file:
+      - .env
     environment:
-      TZ: 'Europe/London'
+      TZ: Europe/Lisbon
       FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD}
       FTLCONF_dns_listeningMode: 'local'
     volumes:
