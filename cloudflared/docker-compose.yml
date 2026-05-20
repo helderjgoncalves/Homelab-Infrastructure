@@ -6,3 +6,4 @@ services:
     dns:
       - ${LAN_DNS_IP}
     command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+networks: {}

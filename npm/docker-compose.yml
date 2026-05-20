@@ -1,14 +1,16 @@
 services:
   npm:
     container_name: npm
-    image: 'jc21/nginx-proxy-manager:latest'
+    image: jc21/nginx-proxy-manager:latest
     restart: unless-stopped
-    network_mode: 'host'
+    network_mode: host
+    dns:
+      - ${LAN_DNS_IP}
     ports:
       # These ports are in format <host-port>:<container-port>
-      - '80:80' # Public HTTP Port
-      - '443:443' # Public HTTPS Port
-      - '81:81' # Admin Web Port
+      - 80:80 # Public HTTP Port
+      - 443:443 # Public HTTPS Port
+      - 81:81 # Admin Web Port
       # Add any other Stream port you want to expose
       # - '21:21' # FTP
 
@@ -18,10 +20,10 @@ services:
       # DB_SQLITE_FILE: "/data/database.sqlite"
 
       # Uncomment this if IPv6 is not enabled on your host
-      DISABLE_IPV6: 'true'
-
+      DISABLE_IPV6: "true"
     volumes:
       # Host base path supplied via .env (or Dockge stack environment
       # variables) so the compose file stays host-agnostic.
-      - '${NPM_DIR}/data:/data'
-      - '${NPM_DIR}/letsencrypt:/etc/letsencrypt'
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+networks: {}

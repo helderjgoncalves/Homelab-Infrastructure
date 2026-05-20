@@ -288,3 +288,6 @@ temp/
 
 # Container Station system data
 container-station-data/
+
+# Untracked external stack (managed separately)
+/opencloud/

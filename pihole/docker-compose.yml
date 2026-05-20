@@ -15,40 +15,25 @@ services:
       macvlan_pihole:
         ipv4_address: ${PIHOLE_IP}
     ports:
-      # Documentation only — under macvlan all container ports are exposed
-      # on the container's LAN IP (${PIHOLE_IP}). The NAS host does NOT
-      # need 53/80/443 free; this block does not publish anything.
-      - "53:53/tcp"
-      - "53:53/udp"
-      - "80:80/tcp"
-      - "443:443/tcp"
-      #- "67:67/udp" # uncomment if running Pi-hole as DHCP server
-    env_file:
-      - .env
+      - 53:53/tcp
+      - 53:53/udp
+      - 443:443/tcp
     environment:
       TZ: Europe/Lisbon
       FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD}
-      FTLCONF_dns_listeningMode: 'local'
+      FTLCONF_dns_listeningMode: local
     volumes:
-      - '${PIHOLE_DIR}/etc-pihole:/etc/pihole'
-    cap_add:
-      # Required if Pi-hole is your DHCP server, otherwise harmless.
-      # See https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
-      - NET_ADMIN
-    # Pin the container's own resolver so Pi-hole can always start, even
-    # when it IS the LAN's DNS server (avoids a chicken-and-egg on cold boot).
+      - ./etc-pihole:/etc/pihole
     dns:
       - 1.1.1.1
-    # Cap the container log file so a long uptime can't fill the disk.
+      - 1.0.0.1
     logging:
       driver: json-file
       options:
-        max-size: "10m"
+        max-size: 10m
         max-file: "3"
     restart: unless-stopped
 
 networks:
-  # Created by bootstrap.sh from PIHOLE_LAN_SUBNET / PIHOLE_LAN_GATEWAY /
-  # PIHOLE_PARENT_IFACE. Marked external so compose never destroys it.
   macvlan_pihole:
     external: true

@@ -15,7 +15,7 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`beszel/`](./beszel/) | Lightweight server + container monitoring | Hub + agent on the NAS; SQLite history |
 | [`cloudflared/`](./cloudflared/) | Cloudflare Tunnel — outbound-only ingress | Token-based; routes managed in CF dashboard |
 | [`devbox/`](./devbox/) | Ubuntu 22.04 SSH dev environment | Built locally from `Dockerfile`; mounts the repo at `/projects` |
-| [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU + OpenVINO ML; uses `stack.env` |
+| [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU + OpenVINO ML |
 | [`npm/`](./npm/) | Nginx Proxy Manager — TLS + per-host routing | Rules live in NPM's SQLite, not in Git |
 | [`pihole/`](./pihole/) | Recursive DNS + ad/tracker blocking + local DNS rewrites | macvlan; needs `bootstrap.sh` once per host |
 | [`qbittorrent/`](./qbittorrent/) | Torrent client | WebUI bound to loopback only |
@@ -24,7 +24,7 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 Each stack folder typically contains:
 
 - `docker-compose.yml`
-- `.env.example` (or `stack.env.example` for Immich) — copy to `.env` / `stack.env` and fill in
+- `.env.example` — copy to `.env` and fill in
 - optional `bootstrap.sh` for one-time host prep (e.g. Pi-hole's macvlan network)
 - optional `Dockerfile` for locally-built images (e.g. devbox)
 
@@ -80,9 +80,9 @@ Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 
 ## Conventions
 
-- **Secrets never in Git.** `.env` / `stack.env` files are ignored; only `*.example` templates are versioned. See `.gitignore` for the full list.
+- **Secrets never in Git.** `.env` files are ignored; only `*.example` templates are versioned. See `.gitignore` for the full list.
 - **One stack = one folder = one Compose project.** Mirrors Dockge's `/opt/stacks/<name>` layout so the repo can be cloned (or symlinked) straight into Dockge's stacks dir.
-- **Host-agnostic compose.** Host paths come from env vars (`UPLOAD_LOCATION`, `PIHOLE_DIR`, `NPM_DIR`, …), never hard-coded.
+- **Stack-relative paths.** Because each stack folder *is* the Dockge stack dir, runtime data lives next to the compose file (`./data`, `./appdata`, …). Host-specific paths (shares, external media) are passed in via env vars (`UPLOAD_LOCATION`, `QBT_DOWNLOADS_DIR`, …) so the compose stays portable across hosts.
 
 ---
 
