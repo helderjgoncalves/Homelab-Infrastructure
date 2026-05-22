@@ -1,0 +1,16 @@
+services:
+  dockge:
+    image: louislam/dockge:1
+    container_name: dockge
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:5001:5001
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/app/data
+      # Host path MUST equal container path so Dockge-generated compose files
+      # resolve correctly when the Docker daemon reads them on the host.
+      - ${STACKS_DIR}:${STACKS_DIR}
+    environment:
+      - DOCKGE_STACKS_DIR=${STACKS_DIR}
+      - DOCKGE_ENABLE_CONSOLE=true
