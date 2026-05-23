@@ -1,0 +1,61 @@
+name: ntfy
+services:
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: ntfy
+    restart: unless-stopped
+    command:
+      - serve
+    environment:
+      - TZ=Europe/Lisbon
+      # Public URL (used for iOS push, attachments, links). Must match the
+      # hostname exposed via your reverse proxy (NPM / Cloudflared).
+      - NTFY_BASE_URL=https://${NTFY_DOMAIN}
+      - NTFY_LISTEN_HTTP=:80
+      - NTFY_BEHIND_PROXY=true
+      # Persistent message cache (so subscribers can fetch missed messages)
+      - NTFY_CACHE_FILE=/var/cache/ntfy/cache.db
+      - NTFY_CACHE_DURATION=12h
+      - NTFY_ATTACHMENT_CACHE_DIR=/var/cache/ntfy/attachments
+      # Auth: lock down publishing. "deny-all" means only authenticated
+      # users with explicit ACLs can read/write. Change to "read-only" if
+      # you want anonymous subscribers but authenticated publishers.
+      - NTFY_AUTH_FILE=/var/lib/ntfy/user.db
+      - NTFY_AUTH_DEFAULT_ACCESS=deny-all
+      # iOS push notifications. ntfy.sh hosts a free relay for self-hosted
+      # servers so APNs delivery works without you running your own APNs
+      # certificate. Leave as-is unless you operate your own.
+      - NTFY_UPSTREAM_BASE_URL=https://ntfy.sh
+      # Web UI / behavior
+      - NTFY_ENABLE_SIGNUP=false
+      - NTFY_ENABLE_LOGIN=true
+      - NTFY_ENABLE_RESERVATIONS=true
+      # Rate limits (sensible defaults for a small personal instance)
+      - NTFY_VISITOR_MESSAGE_DAILY_LIMIT=1000
+      - NTFY_VISITOR_REQUEST_LIMIT_BURST=60
+      # Logging
+      - NTFY_LOG_LEVEL=INFO
+    volumes:
+      - ./cache:/var/cache/ntfy
+      - ./lib:/var/lib/ntfy
+      - ./etc:/etc/ntfy
+    ports:
+      - 127.0.0.1:8088:80
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --tries=1 --spider http://localhost:80/v1/health || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ntfy_network
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+networks:
+  ntfy_network:
+    driver: bridge
