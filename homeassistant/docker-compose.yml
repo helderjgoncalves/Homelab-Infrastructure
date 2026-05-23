@@ -1,0 +1,36 @@
+name: homeassistant
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    # Host networking is the HA-recommended mode: required for mDNS / SSDP /
+    # HomeKit / Matter / Cast / Wiz / etc. device discovery. The web UI is
+    # exposed on the host's port 8123 — proxy it via NPM.
+    network_mode: host
+    privileged: true
+    environment:
+      - TZ=Europe/Lisbon
+    volumes:
+      # HA configuration, automations, db, blueprints, custom_components
+      - ./config:/config
+      # Needed for some integrations (e.g. system monitor) to read host info
+      - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro
+    # Uncomment if you attach a Zigbee / Z-Wave USB stick. Adjust the path
+    # to the actual device (check with `ls -l /dev/serial/by-id/`).
+    # devices:
+    #   - /dev/serial/by-id/usb-YOUR_STICK_HERE:/dev/ttyUSB0
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --tries=1 --spider http://localhost:8123 || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
