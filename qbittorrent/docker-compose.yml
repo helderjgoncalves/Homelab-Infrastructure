@@ -3,6 +3,7 @@ services:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
     environment:
+      - PUID=1000
       - PGID=100
       - UMASK=002
       - TZ=Europe/Lisbon
@@ -14,9 +15,8 @@ services:
       - ${QBT_MUSIC_DIR}:/music
       - ${QBT_MOVIES_DIR}:/movies
       - ${QBT_TV_DIR}:/tv
-
     ports:
-      - 127.0.0.1:9080:9080
+      - 9080:9080
       - 51513:51513
       - 51513:51513/udp
     restart: unless-stopped
@@ -25,4 +25,4 @@ services:
       options:
         max-size: 10m
         max-file: "3"
-
+networks: {}
