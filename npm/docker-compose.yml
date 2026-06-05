@@ -26,4 +26,10 @@ services:
       # variables) so the compose file stays host-agnostic.
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:81/api"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 networks: {}

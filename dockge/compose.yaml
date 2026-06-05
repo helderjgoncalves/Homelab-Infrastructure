@@ -14,4 +14,10 @@ services:
     environment:
       - DOCKGE_STACKS_DIR=${STACKS_DIR}
       - DOCKGE_ENABLE_CONSOLE=false
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 --spider http://127.0.0.1:5001/ || exit 1"]
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 networks: {}

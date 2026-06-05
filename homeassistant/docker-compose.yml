@@ -22,13 +22,16 @@ services:
     # devices:
     #   - /dev/serial/by-id/usb-YOUR_STICK_HERE:/dev/ttyUSB0
     healthcheck:
+      # Probes HA's frontend on the host (network_mode: host).
+      # NOTE: assumes HTTP. If you enable TLS in HA's configuration.yaml,
+      # change the URL to https://localhost:8123 and add --no-check-certificate.
       test:
         - CMD-SHELL
         - wget -q --tries=1 --spider http://localhost:8123 || exit 1
-      interval: 30s
+      interval: 60s
       timeout: 5s
       retries: 3
-      start_period: 60s
+      start_period: 180s
     logging:
       driver: json-file
       options:

@@ -20,9 +20,9 @@ services:
         - curl
         - -f
         - http://localhost:3001
-      interval: 30s
+      interval: 60s
       retries: 3
-      start_period: 10s
+      start_period: 30s
       timeout: 5s
     logging:
       driver: json-file

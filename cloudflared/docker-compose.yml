@@ -5,5 +5,14 @@ services:
     restart: unless-stopped
     dns:
       - ${LAN_DNS_IP}
-    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    # --metrics binds a local-only readiness/metrics endpoint (loopback
+    # inside the container, not published to the host) used by the
+    # healthcheck below.
+    command: tunnel --no-autoupdate --metrics 127.0.0.1:2000 run --token ${TUNNEL_TOKEN}
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:2000", "ready"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 networks: {}
