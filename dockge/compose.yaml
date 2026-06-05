@@ -13,4 +13,5 @@ services:
       - ${STACKS_DIR}:${STACKS_DIR}
     environment:
       - DOCKGE_STACKS_DIR=${STACKS_DIR}
-      - DOCKGE_ENABLE_CONSOLE=true
+      - DOCKGE_ENABLE_CONSOLE=false
+networks: {}
