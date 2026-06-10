@@ -20,7 +20,7 @@ services:
         - curl
         - -f
         - http://localhost:3001
-      interval: 60s
+      interval: 120s
       retries: 3
       start_period: 30s
       timeout: 5s

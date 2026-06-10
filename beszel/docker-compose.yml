@@ -23,18 +23,14 @@ services:
     volumes:
       - ./data:/beszel_data
       - ./socket:/beszel_socket
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --tries=1 --spider http://127.0.0.1:8090/ || exit 1"]
-      interval: 120s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    # No healthcheck: image is distroless (no /bin/sh, no wget/curl/nc).
+    # Liveness is monitored externally via Uptime Kuma's Docker Container
+    # monitor ("running" state) and an HTTP monitor on the public URL.
     logging:
       driver: json-file
       options:
         max-size: 10m
         max-file: "3"
-
   beszel-agent:
     image: henrygd/beszel-agent:latest
     container_name: beszel-agent
@@ -50,12 +46,9 @@ services:
       TZ: Europe/Lisbon
       # Hub public key — set KEY in .env (copy from .env.example).
       KEY: ${KEY}
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 45876 || exit 1"]
-      interval: 120s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+    # No healthcheck: image is distroless (no /bin/sh, no nc).
+    # The hub's UI already shows agent connectivity, which is the
+    # authoritative liveness signal for the agent.
     logging:
       driver: json-file
       options:

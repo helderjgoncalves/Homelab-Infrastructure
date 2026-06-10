@@ -10,8 +10,14 @@ services:
     # healthcheck below.
     command: tunnel --no-autoupdate --metrics 127.0.0.1:2000 run --token ${TUNNEL_TOKEN}
     healthcheck:
-      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:2000", "ready"]
-      interval: 60s
+      test:
+        - CMD
+        - cloudflared
+        - tunnel
+        - --metrics
+        - 127.0.0.1:2000
+        - ready
+      interval: 120s
       timeout: 10s
       retries: 3
       start_period: 30s

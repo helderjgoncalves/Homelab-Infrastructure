@@ -78,6 +78,33 @@ Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 
 ---
 
+## Monitoring
+
+Four layers, each catches what the others can't, all alerts converge on **ntfy**.
+
+| Layer | Tool | Where | Watches | Why it exists |
+| --- | --- | --- | --- | --- |
+| 1. Liveness | [Uptime Kuma](./uptime-kuma/) | NAS (internal) | Per-container Docker state + loopback HTTP-keyword probes | Catches "app crashed" / "container restart loop" before users notice |
+| 2. Resources | [Beszel](./beszel/) | NAS (internal) | CPU, RAM, disk, temperature, per-container metrics | Catches "disk filling", "OOM kills", "thermal throttling" — thresholds, not liveness |
+| 3. End-to-end | [Better Stack](https://betterstack.com/) (free tier) | External | Public probes of user-facing services (Immich, OpenCloud) | Validates the full path: DNS → CF edge → tunnel → cloudflared → NPM → app. Survives the NAS being completely down. |
+| 4. Deadman | Better Stack heartbeat | External (Kuma pings out) | NAS itself is alive and on the internet | Layers 1–2 can't alert when they're the thing that's down. Kuma hits the heartbeat URL on every check; absence = page. |
+
+**Alert sink:** all four layers fan out to a self-hosted ntfy instance → push to phone. One channel, one inbox, one rate-limited topic.
+
+**Status page:** `status.hgoncalves.pt` — Better Stack-hosted, lists user-facing services only (Immich, OpenCloud). Bookmark for "is it me or is it down" before contacting support.
+
+**Heartbeat wiring:** the Kuma monitor that probes the Better Stack heartbeat URL doubles as the deadman ping — no cron, no extra moving parts. Period 5 min + grace 5 min = ~10 min worst-case detection.
+
+### Why not just one tool?
+
+- Kuma alone: silent if the NAS dies, blind to thresholds, can't see the public path.
+- Beszel alone: doesn't probe HTTP endpoints or alert on "container missing".
+- Better Stack alone: 10 free monitors won't cover every container; no resource metrics.
+
+Each tool does what it's cheapest at. Total cost: $0 + ~150 MB RAM.
+
+---
+
 ## Conventions
 
 - **Secrets never in Git.** `.env` files are ignored; only `*.example` templates are versioned. See `.gitignore` for the full list.

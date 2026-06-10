@@ -14,9 +14,15 @@ services:
     environment:
       - DOCKGE_STACKS_DIR=${STACKS_DIR}
       - DOCKGE_ENABLE_CONSOLE=false
+    # Image has no wget/curl, so probe via node (always present).
+    # Exits 0 on any HTTP response, 1 on connection error.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --tries=1 --spider http://127.0.0.1:5001/ || exit 1"]
-      interval: 120s
+      test:
+        - CMD
+        - node
+        - -e
+        - require('http').get('http://127.0.0.1:5001/',r=>process.exit(0)).on('error',()=>process.exit(1))
+      interval: 180s
       timeout: 5s
       retries: 3
       start_period: 30s

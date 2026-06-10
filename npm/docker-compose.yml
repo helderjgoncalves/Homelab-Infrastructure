@@ -6,14 +6,9 @@ services:
     network_mode: host
     dns:
       - ${LAN_DNS_IP}
-    ports:
-      # These ports are in format <host-port>:<container-port>
-      - 80:80 # Public HTTP Port
-      - 443:443 # Public HTTPS Port
-      - 81:81 # Admin Web Port
-      # Add any other Stream port you want to expose
-      # - '21:21' # FTP
-
+    # network_mode: host means the container binds these directly on the
+    # host: 80 (HTTP), 443 (HTTPS), 81 (admin UI). A `ports:` block would
+    # be ignored in host networking, so it is intentionally omitted.
     environment:
       # Uncomment this if you want to change the location of
       # the SQLite DB file within the container
@@ -27,8 +22,12 @@ services:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:81/api"]
-      interval: 60s
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://127.0.0.1:81/api
+      interval: 120s
       timeout: 5s
       retries: 3
       start_period: 30s
