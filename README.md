@@ -15,11 +15,14 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`beszel/`](./beszel/) | Lightweight server + container monitoring | Hub + agent on the NAS; SQLite history |
 | [`cloudflared/`](./cloudflared/) | Cloudflare Tunnel — outbound-only ingress | Token-based; routes managed in CF dashboard |
 | [`devbox/`](./devbox/) | Ubuntu 22.04 SSH dev environment | Built locally from `Dockerfile`; mounts the repo at `/projects` |
+| [`dockge/`](./dockge/) | Compose stack manager (web UI) | Manages every stack in this repo from `/opt/stacks/<name>` |
 | [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU + OpenVINO ML |
 | [`npm/`](./npm/) | Nginx Proxy Manager — TLS + per-host routing | Rules live in NPM's SQLite, not in Git |
+| [`ntfy/`](./ntfy/) | Push notification server | Alert sink for Kuma + Beszel; iOS via the ntfy.sh upstream relay |
+| [`opencloud/`](./opencloud/) | File sync + collaboration suite | OpenCloud + Collabora + Keycloak + LDAP behind Traefik |
 | [`pihole/`](./pihole/) | Recursive DNS + ad/tracker blocking + local DNS rewrites | macvlan; needs `bootstrap.sh` once per host |
 | [`qbittorrent/`](./qbittorrent/) | Torrent client | WebUI bound to loopback only |
-| [`uptime-kuma/`](./uptime-kuma/) | Uptime monitoring | Internal probes only |
+| [`uptime-kuma/`](./uptime-kuma/) | Uptime monitoring | Liveness probes + outbound deadman heartbeat |
 
 Each stack folder typically contains:
 
@@ -53,14 +56,15 @@ Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 │                                                                            │
 │   ┌──────────────┐    ┌────────────────┐    ┌──────────────────────────┐   │
 │   │ cloudflared  │───▶│ Reverse Proxy  │───▶│ Self-hosted services     │   │
-│   │ (tunnel)     │    │ (NPM, HTTPS)   │    │ Immich, qBittorrent,     │   │
-│   └──────────────┘    └────────────────┘    │ devbox, …                │   │
+│   │ (tunnel)     │    │ (NPM, HTTPS)   │    │ Immich, OpenCloud,       │   │
+│   └──────────────┘    └────────────────┘    │ ntfy, qBittorrent,       │   │
+│                                             │ devbox (SSH)             │   │
 │                                             └──────────────────────────┘   │
 │                                                                            │
 │   ┌──────────────┐    ┌────────────────┐    ┌──────────────────────────┐   │
-│   │ Pi-hole      │    │ Dockge         │    │ Uptime Kuma              │   │
-│   │ (DNS + local │    │ (stack mgmt)   │    │ (internal probes)        │   │
-│   │  rewrites)   │    │                │    │                          │   │
+│   │ Pi-hole      │    │ Dockge         │    │ Monitoring               │   │
+│   │ (DNS + local │    │ (stack mgmt)   │    │ Uptime Kuma + Beszel     │   │
+│   │  rewrites)   │    │                │    │ → ntfy (push alerts)     │   │
 │   └──────────────┘    └────────────────┘    └──────────────────────────┘   │
 │                                                                            │
 │              NAS (storage, Docker host, container runtime)                 │
