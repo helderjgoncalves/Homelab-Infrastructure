@@ -95,7 +95,7 @@ Four layers, each catches what the others can't, all alerts converge on **ntfy**
 
 **Alert sink:** all four layers fan out to a self-hosted ntfy instance → push to phone. One channel, one inbox, one rate-limited topic.
 
-**Status page:** `status.hgoncalves.pt` — Better Stack-hosted, lists user-facing services only (Immich, OpenCloud). Bookmark for "is it me or is it down" before contacting support.
+**Status page:** `status.hgoncalves.uk` — Better Stack-hosted, lists user-facing services only (Immich, OpenCloud). Bookmark for "is it me or is it down" before contacting support.
 
 **Heartbeat wiring:** the Kuma monitor that probes the Better Stack heartbeat URL doubles as the deadman ping — no cron, no extra moving parts. Period 5 min + grace 5 min = ~10 min worst-case detection.
 
@@ -106,6 +106,16 @@ Four layers, each catches what the others can't, all alerts converge on **ntfy**
 - Better Stack alone: 10 free monitors won't cover every container; no resource metrics.
 
 Each tool does what it's cheapest at. Total cost: $0 + ~150 MB RAM.
+
+---
+
+## Outbound email
+
+Transactional user-facing mail (OpenCloud invitations, password resets, share notifications, …) is sent through **[Resend](https://resend.com/)** as an SMTP relay. Any stack that needs to send mail is configured with Resend's SMTP host + a per-stack API key; the sending domain (`hgoncalves.pt`) is DKIM/SPF-verified in Resend so mail lands in inboxes, not spam.
+
+Kept out-of-repo: `SMTP_PASSWORD` (the Resend API key) lives in each stack's ignored `.env`, never in Git. The example templates (`.env.example`) document the key names but not the values.
+
+Why external: running our own MTA on a residential IP is a losing game (RBLs, port 25 blocked at the ISP, DKIM/DMARC alignment friction). Resend's free tier covers homelab volume comfortably.
 
 ---
 
