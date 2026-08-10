@@ -1,0 +1,4 @@
+[submodule "opencloud"]
+	path = opencloud
+	url = https://github.com/helderjgoncalves/opencloud-compose.git
+	branch = main

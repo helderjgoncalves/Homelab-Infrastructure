@@ -289,5 +289,5 @@ temp/
 # Container Station system data
 container-station-data/
 
-# Untracked external stack (managed separately)
-/opencloud/
+# Note: /opencloud/ is a git submodule pointing at
+# https://github.com/helderjgoncalves/opencloud-compose (see .gitmodules).
