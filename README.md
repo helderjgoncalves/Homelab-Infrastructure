@@ -114,6 +114,7 @@ Each tool does what it's cheapest at. Total cost: $0 + ~150 MB RAM.
 - **Secrets never in Git.** `.env` files are ignored; only `*.example` templates are versioned. See `.gitignore` for the full list.
 - **One stack = one folder = one Compose project.** Mirrors Dockge's `/opt/stacks/<name>` layout so the repo can be cloned (or symlinked) straight into Dockge's stacks dir.
 - **Stack-relative paths.** Because each stack folder *is* the Dockge stack dir, runtime data lives next to the compose file (`./data`, `./appdata`, …). Host-specific paths (shares, external media) are passed in via env vars (`UPLOAD_LOCATION`, `QBT_DOWNLOADS_DIR`, …) so the compose stays portable across hosts.
+- **`opencloud/` is a submodule** pointing at [`helderjgoncalves/opencloud-compose`](https://github.com/helderjgoncalves/opencloud-compose) (a fork of `opencloud-eu/opencloud-compose`). Clone with `--recurse-submodules`, or after cloning run `git submodule update --init`. To bump the pin: update inside `opencloud/`, then `git add opencloud && git commit` at the repo root.
 
 ---
 
