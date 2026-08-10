@@ -22,11 +22,7 @@ services:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
     healthcheck:
-      test:
-        - CMD
-        - curl
-        - -fsS
-        - http://127.0.0.1:81/api
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:81/api"]
       interval: 120s
       timeout: 5s
       retries: 3
