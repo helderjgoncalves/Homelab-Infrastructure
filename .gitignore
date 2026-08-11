@@ -289,5 +289,10 @@ temp/
 # Container Station system data
 container-station-data/
 
+# Host-local operational runbook. Kept on the NAS only, never committed: it
+# maps which admin surfaces are reachable and how they are contained, which is
+# exactly the information a public repo should not hand out.
+docs/OPERATIONS.md
+
 # Note: /opencloud/ is a git submodule pointing at
 # https://github.com/helderjgoncalves/opencloud-compose (see .gitmodules).
