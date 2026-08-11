@@ -15,7 +15,7 @@ jobs:
     name: compose config
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Every .env.example ships blank values so nobody deploys a placeholder
       # by accident, but `${VAR:?}` treats blank as unset. Fill the blanks with
@@ -51,7 +51,7 @@ jobs:
     name: yamllint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: pipx install yamllint
       - run: yamllint --strict .
 
@@ -59,7 +59,7 @@ jobs:
     name: shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Warning level and above: the scripts source a .env that only exists on
       # the Docker host, which shellcheck can only ever report as SC1091 info.
       - run: shellcheck --severity=warning pihole/scripts/*.sh
@@ -68,7 +68,7 @@ jobs:
     name: gitleaks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: a secret that was committed and later removed is
           # still a leaked secret.
