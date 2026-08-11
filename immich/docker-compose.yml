@@ -26,11 +26,7 @@ services:
       - ${SSD_LOCATION}/profile:/data/profile
       - ${SSD_LOCATION}/encoded-video:/data/encoded-video
       - /etc/localtime:/etc/localtime:ro
-      - ${IMMICH_HOMES_BASE}/jose/Fotos:/external_jose
-      - ${IMMICH_HOMES_BASE}/jose/Fotos Telemóvel:/external_jose_telemovel
-      - ${IMMICH_HOMES_BASE}/ludovina/Fotos
-        Telemóvel:/external_ludovina_telemovel
-      - ${IMMICH_HOMES_BASE}/hgo/Photos:/external_helder
+      # External photo libraries are mounted via docker-compose.override.yml (gitignored).
     ports:
       - 127.0.0.1:2283:2283
     depends_on:

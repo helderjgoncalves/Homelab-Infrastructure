@@ -16,6 +16,12 @@
 !.env.sample
 !.env.*.sample
 
+# Local docker-compose overrides (may reference private host paths / user data)
+docker-compose.override.yml
+docker-compose.override.yaml
+compose.override.yml
+compose.override.yaml
+
 # Dockge-style stack env file (auto-created by the UI from stack env vars)
 stack.env
 !stack.env.example
