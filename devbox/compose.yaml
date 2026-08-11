@@ -60,5 +60,11 @@ services:
       - ./config:/config
       - ..:/projects
     ports:
+      # Deliberate exception to the loopback-only rule: this is the LAN dev
+      # entry point, so it must stay reachable without a tunnel. Compensating
+      # controls: public-key auth only (PasswordAuthentication no), root login
+      # disabled, and no Docker socket mounted. Note it grants NOPASSWD sudo
+      # inside the container and mounts the repo at /projects, so treat an
+      # authorized key here as equivalent to repo write access.
       - 2222:2222
     restart: unless-stopped

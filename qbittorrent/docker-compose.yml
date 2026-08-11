@@ -16,7 +16,11 @@ services:
       - ${QBT_MOVIES_DIR}:/movies
       - ${QBT_TV_DIR}:/tv
     ports:
-      - 9080:9080
+      # WebUI is reachable only from the host; NPM (network_mode: host)
+      # proxies it. qBittorrent itself must keep binding 0.0.0.0 inside the
+      # container (WebUI\Address=*), otherwise docker-proxy cannot reach it.
+      - 127.0.0.1:9080:9080
+      # Torrent ports must stay reachable from the internet for inbound peers.
       - 51513:51513
       - 51513:51513/udp
     restart: unless-stopped

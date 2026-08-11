@@ -9,6 +9,17 @@ services:
     # network_mode: host means the container binds these directly on the
     # host: 80 (HTTP), 443 (HTTPS), 81 (admin UI). A `ports:` block would
     # be ignored in host networking, so it is intentionally omitted.
+    #
+    # Host networking is REQUIRED, not incidental: every other stack binds its
+    # UI to 127.0.0.1, and NPM reaches those origins over the host loopback
+    # (e.g. http://127.0.0.1:2283 for Immich). Moving NPM into a bridge network
+    # would make 127.0.0.1 resolve to NPM's own namespace and break all ingress.
+    #
+    # Consequence: port 81 (admin UI) cannot be restricted with a bind address
+    # here and is reachable from the LAN, protected only by NPM's own login.
+    # Contain it at the host firewall instead, then reach the UI through an SSH
+    # tunnel. Test the tunnel before relying on a DROP rule: locking yourself
+    # out of the proxy admin while the proxy is your only ingress is painful.
     environment:
       # Uncomment this if you want to change the location of
       # the SQLite DB file within the container
