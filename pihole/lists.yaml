@@ -77,4 +77,3 @@ deny_exact:
 deny_regex:
   - pattern: tracker\..*
     enabled: true
-

@@ -1,0 +1,22 @@
+---
+# Lint rules for the compose files and workflows in this repo.
+#
+# Relaxations are deliberate:
+#   line-length      — pinned image digests and devbox's inline Dockerfile
+#                      cannot be wrapped without changing meaning.
+#   document-start   — compose files conventionally omit the leading `---`.
+#   truthy           — a workflow's `on:` key is not a boolean.
+#   comments         — existing files use a single space before trailing `#`.
+
+extends: default
+
+ignore: |
+  opencloud/
+
+rules:
+  line-length: disable
+  document-start: disable
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
