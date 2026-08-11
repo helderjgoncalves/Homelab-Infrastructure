@@ -17,7 +17,7 @@
 
 services:
   beszel:
-    image: henrygd/beszel:latest
+    image: henrygd/beszel:0
     container_name: beszel
     restart: unless-stopped
     ports:
@@ -37,7 +37,7 @@ services:
         max-size: 10m
         max-file: "3"
   beszel-agent:
-    image: henrygd/beszel-agent:latest
+    image: henrygd/beszel-agent:0
     container_name: beszel-agent
     restart: unless-stopped
     # host network = accurate per-interface network stats and easy hub<->agent talk

@@ -1,7 +1,7 @@
 name: ntfy
 services:
   ntfy:
-    image: binwiederhier/ntfy:latest
+    image: binwiederhier/ntfy:v2
     container_name: ntfy
     restart: unless-stopped
     command:
