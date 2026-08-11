@@ -10,7 +10,7 @@ services:
       - ./data:/app/data
       # Host path MUST equal container path so Dockge-generated compose files
       # resolve correctly when the Docker daemon reads them on the host.
-      - ${STACKS_DIR}:${STACKS_DIR}
+      - ${STACKS_DIR:?set STACKS_DIR in .env}:${STACKS_DIR}
     environment:
       - DOCKGE_STACKS_DIR=${STACKS_DIR}
       - DOCKGE_ENABLE_CONSOLE=false

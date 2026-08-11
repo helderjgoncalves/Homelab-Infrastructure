@@ -11,10 +11,10 @@ services:
       - TORRENTING_PORT=51513
     volumes:
       - ./appdata:/config
-      - ${QBT_DOWNLOADS_DIR}:/downloads
-      - ${QBT_MUSIC_DIR}:/music
-      - ${QBT_MOVIES_DIR}:/movies
-      - ${QBT_TV_DIR}:/tv
+      - ${QBT_DOWNLOADS_DIR:?set QBT_DOWNLOADS_DIR in .env}:/downloads
+      - ${QBT_MUSIC_DIR:?set QBT_MUSIC_DIR in .env}:/music
+      - ${QBT_MOVIES_DIR:?set QBT_MOVIES_DIR in .env}:/movies
+      - ${QBT_TV_DIR:?set QBT_TV_DIR in .env}:/tv
     ports:
       # WebUI is reachable only from the host; NPM (network_mode: host)
       # proxies it. qBittorrent itself must keep binding 0.0.0.0 inside the

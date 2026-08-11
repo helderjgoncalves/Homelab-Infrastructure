@@ -4,7 +4,7 @@ services:
     container_name: cloudflare-tunnel
     restart: unless-stopped
     dns:
-      - ${LAN_DNS_IP}
+      - ${LAN_DNS_IP:?set LAN_DNS_IP in .env}
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
     command: tunnel --no-autoupdate --metrics 127.0.0.1:2000 run

@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     network_mode: host
     dns:
-      - ${LAN_DNS_IP}
+      - ${LAN_DNS_IP:?set LAN_DNS_IP in .env}
     # network_mode: host means the container binds these directly on the
     # host: 80 (HTTP), 443 (HTTPS), 81 (admin UI). A `ports:` block would
     # be ignored in host networking, so it is intentionally omitted.

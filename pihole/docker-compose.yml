@@ -13,14 +13,14 @@ services:
     image: pihole/pihole:latest
     networks:
       macvlan_pihole:
-        ipv4_address: ${PIHOLE_IP}
+        ipv4_address: ${PIHOLE_IP:?set PIHOLE_IP in .env}
     ports:
       - 53:53/tcp
       - 53:53/udp
       - 443:443/tcp
     environment:
       TZ: Europe/Lisbon
-      FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD}
+      FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?set PIHOLE_WEBPASSWORD in .env}
       FTLCONF_dns_listeningMode: local
     volumes:
       - ./etc-pihole:/etc/pihole

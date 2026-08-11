@@ -50,7 +50,7 @@ services:
       LISTEN: 45876
       TZ: Europe/Lisbon
       # Hub public key — set KEY in .env (copy from .env.example).
-      KEY: ${KEY}
+      KEY: ${KEY:?set KEY in .env}
     # No healthcheck: image is distroless (no /bin/sh, no nc).
     # The hub's UI already shows agent connectivity, which is the
     # authoritative liveness signal for the agent.

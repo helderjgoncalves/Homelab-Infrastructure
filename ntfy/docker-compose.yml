@@ -10,7 +10,7 @@ services:
       - TZ=Europe/Lisbon
       # Public URL (used for iOS push, attachments, links). Must match the
       # hostname exposed via your reverse proxy (NPM / Cloudflared).
-      - NTFY_BASE_URL=https://${NTFY_DOMAIN}
+      - NTFY_BASE_URL=https://${NTFY_DOMAIN:?set NTFY_DOMAIN in .env}
       - NTFY_LISTEN_HTTP=:80
       - NTFY_BEHIND_PROXY=true
       # Persistent message cache (so subscribers can fetch missed messages)
