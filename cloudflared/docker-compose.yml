@@ -5,10 +5,9 @@ services:
     restart: unless-stopped
     dns:
       - ${LAN_DNS_IP}
-    # --metrics binds a local-only readiness/metrics endpoint (loopback
-    # inside the container, not published to the host) used by the
-    # healthcheck below.
-    command: tunnel --no-autoupdate --metrics 127.0.0.1:2000 run --token ${TUNNEL_TOKEN}
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    command: tunnel --no-autoupdate --metrics 127.0.0.1:2000 run
     healthcheck:
       test:
         - CMD
