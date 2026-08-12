@@ -1,9 +1,15 @@
-# Pi-hole runs on its own LAN IP via a macvlan network so it can bind
-# port 53 without colliding with anything on the NAS host.
+# Pi-hole runs on its own LAN IP via a macvlan network so it can bind port 53
+# without colliding with anything on the NAS host.
+#
+# The NAS itself cannot reach that IP directly — the kernel drops traffic from a
+# parent interface to its own macvlan children — so scripts/pihole-watchdog.sh
+# builds a macvlan shim at boot. Container Station also launches dockerd with a
+# hard-coded `--dns 192.168.1.2`, so every container's DNS depends on that shim
+# too. See README.md.
 #
 # Prerequisites (see bootstrap.sh and .env.example):
 #   - macvlan network `macvlan_pihole` must exist on the host
-#   - PIHOLE_DIR, PIHOLE_IP, PIHOLE_WEBPASSWORD set in env
+#   - PIHOLE_IP, PIHOLE_WEBPASSWORD set in env
 #
 # Docs: https://github.com/pi-hole/docker-pi-hole/  ·  https://docs.pi-hole.net/
 
@@ -14,10 +20,9 @@ services:
     networks:
       macvlan_pihole:
         ipv4_address: ${PIHOLE_IP:?set PIHOLE_IP in .env}
-    ports:
-      - 53:53/tcp
-      - 53:53/udp
-      - 443:443/tcp
+    # No `ports:` here on purpose. Publishing is a no-op for a macvlan-only
+    # container, and it silently takes effect the moment any bridge network is
+    # attached — at which point `443:443` collides with the QTS web UI.
     environment:
       TZ: Europe/Lisbon
       FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?set PIHOLE_WEBPASSWORD in .env}

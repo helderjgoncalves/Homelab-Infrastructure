@@ -1,0 +1,14 @@
+# Secrets — .env holds PIHOLE_WEBPASSWORD. Commit .env.example instead.
+.env
+
+# Pi-hole runtime state: ~1 GB, rebuilt by the container, and contains
+# cli_pw plus query/DHCP history. Never versioned.
+etc-pihole/
+
+# Generated at runtime by the scripts.
+scripts/*.log
+
+# Host-specific snapshot taken while migrating off the cron entry.
+scripts/crontab.backup-before-removal
+
+.DS_Store
