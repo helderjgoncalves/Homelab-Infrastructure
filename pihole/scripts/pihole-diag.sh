@@ -116,7 +116,12 @@ else
   section "7. docker / pihole container"
   if run docker ps >/dev/null 2>&1; then
     out "daemon: up"
-    out "dockerd --dns: $(tr '\0' ' ' < /proc/$(pidof dockerd 2>/dev/null | awk '{print $1}')/cmdline 2>/dev/null | grep -o '\-\-dns [0-9.]*' | head -1)"
+    dockerd_pid=$(pidof dockerd 2>/dev/null | awk '{print $1}')
+    if [ -n "$dockerd_pid" ]; then
+      out "dockerd --dns: $(tr '\0' ' ' < "/proc/${dockerd_pid}/cmdline" 2>/dev/null | grep -o '\-\-dns [0-9.]*' | head -1)"
+    else
+      out "dockerd --dns: (could not read dockerd's pid)"
+    fi
     out "pihole: $(run docker inspect -f '{{.State.Status}} health={{.State.Health.Status}}' pihole 2>/dev/null | head -1 || echo 'not found')"
     section "7b. container resolv.conf (set at container start from dockerd --dns)"
     for c in npm uptime-kuma ntfy immich_server qbittorrent dockge; do
