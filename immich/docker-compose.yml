@@ -21,8 +21,8 @@ services:
     volumes:
       # Do not edit the next line. If you want to change the media storage location on your system, edit the value of UPLOAD_LOCATION in the .env file
       - ${UPLOAD_LOCATION}:/data
+      - ${UPLOAD_LOCATION}/backups:/data/backups
       - ${SSD_LOCATION}/thumbs:/data/thumbs
-      - ${SSD_LOCATION}/backups:/data/backups
       - ${SSD_LOCATION}/profile:/data/profile
       - ${SSD_LOCATION}/encoded-video:/data/encoded-video
       - /etc/localtime:/etc/localtime:ro
