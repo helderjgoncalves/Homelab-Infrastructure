@@ -254,6 +254,9 @@ $RECYCLE.BIN/
 !.vscode/launch.json
 .history/
 
+# Cursor
+.cursor/
+
 # Vim / Emacs
 *.swp
 *.swo
