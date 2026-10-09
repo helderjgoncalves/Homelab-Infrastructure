@@ -1,0 +1,230 @@
+/* hgoncalves.uk look for Homer: Inter, gradient hero header, soft cards.
+   Single source for the look: Homer's own variables plus the extra tokens
+   below. Unlayered, so it wins over Homer's built-in @layer theme. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+
+#app.light {
+  /* Homer variables */
+  --highlight-primary: #2c557f;
+  --highlight-secondary: #3a6ea5;
+  --highlight-hover: #ffffff26;
+  --background: #f7f9fc;
+  --card-background: #ffffff;
+  --text: #1c2330;
+  --text-header: #ffffff;
+  --text-title: #1c2330;
+  --text-subtitle: #54627a;
+  --card-shadow: #1c23300f;
+  --link: #3a6ea5;
+  --link-hover: #2c557f;
+  /* Site tokens */
+  --hero-from: #2c557f;
+  --hero-to: #3a6ea5;
+  --hero-glow: #4a85c22e;
+  --heading: #2c557f;
+  --rule: #d6dbe4;
+  --accent-soft: #e5edf6;
+  --shadow-card: 0 1px 2px #1c23300a, 0 8px 24px #1c23300f;
+  --shadow-hover: 0 2px 4px #1c23300f, 0 12px 32px #1c23301a;
+}
+#app.dark {
+  /* Homer variables */
+  --highlight-primary: #182236;
+  --highlight-secondary: #6fa3da;
+  --highlight-hover: #ffffff1f;
+  --background: #0e131c;
+  --card-background: #161d2c;
+  --text: #e8edf7;
+  --text-header: #ffffff;
+  --text-title: #e8edf7;
+  --text-subtitle: #8e98ab;
+  --card-shadow: #00000040;
+  --link: #6fa3da;
+  --link-hover: #9cc0e8;
+  /* Site tokens */
+  --hero-from: #182236;
+  --hero-to: #233a59;
+  --hero-glow: #4a85c21a;
+  --heading: #6fa3da;
+  --rule: #2a3242;
+  --accent-soft: #1e2c43;
+  --shadow-card: 0 1px 2px #0000004d, 0 8px 24px #00000040;
+  --shadow-hover: 0 2px 4px #00000059, 0 12px 32px #0006;
+}
+
+body,
+body #app,
+body #app input {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+/* ---- Header: one gradient block (title + nav), like the site's hero ---- */
+body #app #bighead {
+  position: relative;
+  background:
+    radial-gradient(900px 320px at 15% -10%, var(--hero-glow), transparent 55%),
+    linear-gradient(180deg, var(--hero-from) 0%, var(--hero-to) 100%);
+}
+body #app #bighead::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 32px;
+  background: linear-gradient(180deg, transparent, var(--background));
+  pointer-events: none;
+}
+body #app #bighead .first-line,
+body #app #bighead .navbar,
+body #app #bighead .navbar-menu {
+  background: transparent;
+}
+body #app #bighead .first-line .container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 2rem 0.75rem 0.5rem;
+}
+body #app #bighead .first-line .logo {
+  float: none;
+}
+body #app #bighead .first-line .logo img {
+  padding: 0;
+  width: 52px;
+  height: 52px;
+  max-width: none;
+  max-height: none;
+  border-radius: 12px;
+  box-shadow: 0 6px 18px #00000033;
+}
+body #app #bighead .dashboard-title {
+  padding: 0;
+}
+body #app #bighead .headline {
+  display: block;
+  margin: 0 0 0.2rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ffffffb8;
+}
+body #app #bighead .first-line h1 {
+  margin: 0;
+  font-size: clamp(1.75rem, 5vw, 2.4rem);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+/* Nav links become pills on the gradient */
+body #app #bighead .navbar {
+  padding: 0.25rem 0 1.75rem;
+  position: relative;
+  z-index: 1;
+}
+body #app #bighead .navbar a.navbar-item {
+  margin: 0.25rem 0.5rem 0.25rem 0;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid #ffffff33;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #ffffffeb;
+}
+body #app #bighead .navbar a.navbar-item:hover,
+body #app #bighead .navbar a.navbar-item:focus-visible {
+  background: #ffffff26;
+  color: #fff;
+}
+/* Line the pills up with the title and the card grid */
+body #app #bighead .navbar > .container .navbar-menu {
+  margin: 0;
+  padding: 0 1.5rem;
+}
+body #app #bighead .navbar-end a {
+  border-radius: 999px;
+}
+body #app .search-bar input {
+  background-color: #ffffff1f;
+  border: 1px solid #ffffff33;
+  border-radius: 999px;
+}
+body #app .search-bar input::placeholder {
+  color: #ffffffb8;
+}
+body #app .search-bar input:focus {
+  background-color: #fff;
+  color: #1c2330;
+}
+
+/* ---- Groups: uppercase section titles, as on the site ---- */
+body #app #main-section h2.group-title {
+  margin-top: 1.5rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--heading);
+}
+body #app #main-section h2.group-title i {
+  color: var(--highlight-secondary);
+  font-size: 1rem;
+}
+
+/* ---- Cards ---- */
+body #app #main-section .card {
+  border-radius: 14px;
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-card);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+body #app.dark #main-section .card {
+  border-color: transparent;
+}
+body #app #main-section .card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+  border-color: var(--highlight-secondary);
+}
+body #app #main-section .card-content {
+  height: auto;
+  padding: 1rem 1.1rem;
+}
+body #app #main-section .media {
+  align-items: center;
+}
+body #app #main-section .media-left {
+  margin-inline-end: 0.85rem;
+}
+body #app #main-section .media-left .image {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 7px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+body #app #main-section .media-left .image img {
+  max-height: 100%;
+  object-fit: contain;
+}
+body #app #main-section .title {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.15rem;
+}
+body #app #main-section .subtitle {
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+/* Grouped (vertical) layout: separate cards instead of Homer's fused stack */
+body #app #main-section .layout-vertical .column > div + div {
+  margin-top: 0.75rem;
+}
+body #app #main-section .layout-vertical .card {
+  border-radius: 14px;
+}

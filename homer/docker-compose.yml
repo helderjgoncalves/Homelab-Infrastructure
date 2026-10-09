@@ -1,0 +1,33 @@
+name: homer
+services:
+  homer:
+    image: b4bz/homer:latest
+    container_name: homer
+    restart: unless-stopped
+    user: 1000:1000
+    environment:
+      - TZ=Europe/Lisbon
+      # Don't overwrite config.yml with the bundled default on first start.
+      - INIT_ASSETS=0
+    volumes:
+      - ./assets:/www/assets
+    ports:
+      - 127.0.0.1:8085:8080
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --tries=1 --spider http://127.0.0.1:8080/ || exit 1
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - homer_network
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+networks:
+  homer_network:
+    driver: bridge

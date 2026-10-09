@@ -1,0 +1,98 @@
+---
+# Homer — static dashboard. Edit and refresh; no restart needed.
+# Every URL is a Traefik route over HTTPS — add it to traefik/dynamic/routes.yml first.
+title: Homelab
+subtitle: hgoncalves.uk
+logo: assets/logo.svg
+header: true
+footer: false
+columns: "3"
+connectivityCheck: true
+theme: default
+defaults:
+  layout: columns
+  colorTheme: auto
+
+# All styling (palette, light/dark, layout) lives in custom.css.
+stylesheet:
+  - assets/custom.css
+
+links:
+  - name: Dockge
+    icon: fas fa-boxes-stacked
+    url: https://dockge.hgoncalves.uk
+  - name: Traefik
+    icon: fas fa-route
+    url: https://traefik.hgoncalves.uk/dashboard/
+  - name: Router
+    icon: fas fa-network-wired
+    url: https://router.hgoncalves.uk
+
+services:
+  - name: Apps
+    icon: fas fa-cloud
+    items:
+      - name: NAS
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/qnap.png
+        subtitle: QTS
+        url: https://nas.hgoncalves.uk
+      - name: Immich
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/immich.png
+        subtitle: Photos & videos
+        url: https://photos.hgoncalves.uk
+      - name: OpenCloud
+        logo: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/opencloud.svg
+        subtitle: Files & collaboration
+        url: https://drive.hgoncalves.uk
+
+  - name: Media
+    icon: fas fa-film
+    items:
+      - name: Plex
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/plex.png
+        subtitle: Streaming
+        url: https://app.plex.tv
+      - name: Seerr
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/jellyseerr.png
+        subtitle: Requests
+        url: https://requests.hgoncalves.uk
+      - name: Radarr
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/radarr.png
+        subtitle: Movies
+        url: https://radarr.hgoncalves.uk
+      - name: Sonarr
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/sonarr.png
+        subtitle: Series
+        url: https://sonarr.hgoncalves.uk
+      - name: Prowlarr
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/prowlarr.png
+        subtitle: Indexers
+        url: https://prowlarr.hgoncalves.uk
+      - name: qBittorrent
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/qbittorrent.png
+        subtitle: Downloads
+        url: https://qbittorrent.hgoncalves.uk
+      - name: Maintainerr
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/maintainerr.png
+        subtitle: Cleanup rules
+        url: https://maintainerr.hgoncalves.uk
+
+  - name: Network & Monitoring
+    icon: fas fa-heart-pulse
+    items:
+      - name: AdGuard Home
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/adguard-home.png
+        subtitle: DNS
+        url: https://dns.hgoncalves.uk
+      - name: Uptime Kuma
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/uptime-kuma.png
+        subtitle: Uptime
+        url: https://kuma.hgoncalves.uk
+      - name: Beszel
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/beszel.png
+        subtitle: Server metrics
+        url: https://beszel.hgoncalves.uk
+      - name: ntfy
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/ntfy.png
+        subtitle: Notifications
+        url: https://ntfy.hgoncalves.uk

@@ -18,6 +18,7 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`devbox/`](./devbox/) | Debian bookworm SSH dev environment | Built from `dockerfile_inline` in the compose file; mounts the repo at `/projects`. SSH on `2222` is a deliberate LAN exception |
 | [`dockge/`](./dockge/) | Compose stack manager (web UI) | Manages every stack in this repo from `STACKS_DIR` |
 | [`homeassistant/`](./homeassistant/) | Home automation | `network_mode: host` + `privileged: true` for device/mDNS discovery |
+| [`homer/`](./homer/) | Static start page / service launcher | nginx + YAML (`assets/config.yml`); ~10–20 MB RAM, loopback `:8085` |
 | [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU passthrough (`/dev/dri`); CPU machine-learning image |
 | [`media-automation/`](./media-automation/) | qBittorrent + Prowlarr + Radarr + Sonarr + Maintainerr + Seerr (Watchlist/Seerr requests → downloads → cleanup) | Single `DATA_DIR` mount for hardlinks; WebUIs on loopback; legacy qBittorrent mounts in the gitignored override |
 | [`nas-host/`](./nas-host/) | Host plumbing for the DNS container (not a stack) | macvlan network, shim, `/etc/resolv.conf` and the QTS boot hook; `bootstrap.sh` once per host |
