@@ -1,0 +1,207 @@
+# media-automation — Plex Watchlist -> Radarr/Sonarr -> qBittorrent automation.
+#
+#   prowlarr     : indexer manager; pushes indexers to Radarr and Sonarr
+#   radarr       : movies
+#   sonarr       : TV
+#   qbittorrent  : torrent client; Radarr/Sonarr reach it as qbittorrent:9080
+#   maintainerr  : deletes watched media by rule (Plex + Radarr/Sonarr)
+#   seerr        : request portal; per-season TV requests, local logins
+#
+# Storage: one data root (DATA_DIR) mounted as /data in Radarr, Sonarr and
+# qBittorrent, so imports are hardlinks rather than copies:
+#   /data/torrents/{movies,tv,music}   qBittorrent categories
+#   /data/media/{movies,tv,music}      Plex libraries
+# Hardlinks only work if torrents/ and media/ are on the same filesystem and
+# every container sees them through this same single mount.
+#
+# App configs live in ./appdata (SSD, gitignored). qBittorrent's pre-existing
+# library mounts (/downloads, /movies, /tv, /music) live in the gitignored
+# docker-compose.override.yml so torrents added before /data keep seeding.
+
+name: media-automation
+services:
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment: &lsio-env
+      - PUID=1000
+      - PGID=100
+      - UMASK=002
+      - TZ=Europe/Lisbon
+    volumes:
+      - ./appdata/prowlarr:/config
+    ports:
+      - 127.0.0.1:9696:9696
+    networks:
+      - media
+    mem_limit: 512m
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://127.0.0.1:9696/ping
+      interval: 180s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    environment: *lsio-env
+    volumes:
+      - ./appdata/radarr:/config
+      - ${DATA_DIR:?set DATA_DIR in .env}:/data
+    ports:
+      - 127.0.0.1:7878:7878
+    networks:
+      - media
+    mem_limit: 768m
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://127.0.0.1:7878/ping
+      interval: 180s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    environment: *lsio-env
+    volumes:
+      - ./appdata/sonarr:/config
+      - ${DATA_DIR:?set DATA_DIR in .env}:/data
+    ports:
+      - 127.0.0.1:8989:8989
+    networks:
+      - media
+    mem_limit: 768m
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://127.0.0.1:8989/ping
+      interval: 180s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=100
+      - UMASK=002
+      - TZ=Europe/Lisbon
+      - WEBUI_PORT=9080
+      - TORRENTING_PORT=51513
+    volumes:
+      - ./appdata/qbittorrent:/config
+      - ${DATA_DIR:?set DATA_DIR in .env}:/data
+      # Legacy library mounts: see docker-compose.override.yml.
+    ports:
+      # WebUI is reachable only from the host; Traefik (network_mode: host)
+      # proxies it. qBittorrent itself must keep binding 0.0.0.0 inside the
+      # container (WebUI\Address=*), otherwise docker-proxy cannot reach it.
+      - 127.0.0.1:9080:9080
+      # Torrent port. No router forward/UPnP/IPv6, so peers can't reach it
+      # from the internet today; kept so a later forward just works.
+      - 51513:51513
+      - 51513:51513/udp
+    networks:
+      - media
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://127.0.0.1:9080/
+      interval: 180s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *logging
+
+  maintainerr:
+    image: ghcr.io/maintainerr/maintainerr:latest
+    container_name: maintainerr
+    restart: unless-stopped
+    # The image runs as a fixed UID; match the stack's 1000:100 so
+    # ./appdata/maintainerr stays writable alongside the other apps.
+    user: "1000:100"
+    environment:
+      - TZ=Europe/Lisbon
+    volumes:
+      - ./appdata/maintainerr:/opt/data
+    ports:
+      - 127.0.0.1:6246:6246
+    networks:
+      - media
+    mem_limit: 512m
+    healthcheck:
+      # Node image: no curl, so probe with node itself.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:6246/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 180s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+
+  seerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: seerr
+    restart: unless-stopped
+    # Runs as the image's `node` user (UID 1000); ./appdata/seerr must be
+    # owned by UID 1000.
+    init: true
+    environment:
+      - TZ=Europe/Lisbon
+      - LOG_LEVEL=info
+      - PORT=5055
+    volumes:
+      - ./appdata/seerr:/app/config
+    ports:
+      - 127.0.0.1:5055:5055
+    networks:
+      - media
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget --no-verbose --tries=1 --spider http://localhost:5055/api/v1/settings/public || exit 1
+      interval: 180s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *logging
+
+networks:
+  media:
+    name: media
+    driver: bridge

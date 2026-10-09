@@ -19,11 +19,11 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`dockge/`](./dockge/) | Compose stack manager (web UI) | Manages every stack in this repo from `STACKS_DIR` |
 | [`homeassistant/`](./homeassistant/) | Home automation | `network_mode: host` + `privileged: true` for device/mDNS discovery |
 | [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU passthrough (`/dev/dri`); CPU machine-learning image |
+| [`media-automation/`](./media-automation/) | qBittorrent + Prowlarr + Radarr + Sonarr + Maintainerr + Seerr (Watchlist/Seerr requests → downloads → cleanup) | Single `DATA_DIR` mount for hardlinks; WebUIs on loopback; legacy qBittorrent mounts in the gitignored override |
 | [`nas-host/`](./nas-host/) | Host plumbing for the DNS container (not a stack) | macvlan network, shim, `/etc/resolv.conf` and the QTS boot hook; `bootstrap.sh` once per host |
 | [`npm/`](./npm/) | Nginx Proxy Manager — TLS + per-host routing | Rules live in NPM's SQLite, not in Git |
 | [`ntfy/`](./ntfy/) | Push notification server | Alert sink for Kuma + Beszel; iOS via the ntfy.sh upstream relay |
 | [`opencloud/`](./opencloud/) | File sync + collaboration suite | OpenCloud + Collabora + Keycloak + LDAP behind Traefik |
-| [`qbittorrent/`](./qbittorrent/) | Torrent client | WebUI bound to loopback only |
 | [`uptime-kuma/`](./uptime-kuma/) | Uptime monitoring | Liveness probes + outbound deadman heartbeat |
 
 Each stack folder typically contains:
