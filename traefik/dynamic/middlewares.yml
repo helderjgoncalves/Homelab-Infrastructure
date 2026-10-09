@@ -5,14 +5,22 @@ http:
       headers:
         stsSeconds: 63072000
 
-    # LAN and the owner's Tailscale device only. Tunnel traffic arrives from
-    # cloudflared's bridge IP, so this also keeps a router off the internet.
-    lan-only:
+    # Access layers. Tunnel traffic arrives from cloudflared's bridge IP, so
+    # both also keep a router off the internet.
+    #
+    # private: LAN + the owner's Tailscale devices.
+    private:
       ipAllowList:
         sourceRange:
           - 192.168.1.0/24
           - 100.98.39.35/32
           - 100.99.86.43/32
+
+    # lan-only: home LAN only — not reachable over Tailscale either.
+    lan-only:
+      ipAllowList:
+        sourceRange:
+          - 192.168.1.0/24
 
     # Cloudflare's cookies are domain-scoped, so the browser sends cf_clearance
     # and CF_Authorization to every *.hgoncalves.uk name. The ONT's small header

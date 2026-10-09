@@ -5,7 +5,10 @@ Reverse proxy for every stack: TLS termination + one route per hostname, with th
 - **Routes:** [`dynamic/routes.yml`](./dynamic/routes.yml). Hot-reloaded on save — no restart.
 - **Certs:** one Let's Encrypt cert per hostname, issued automatically on the first request via Cloudflare DNS-01. Never a wildcard (HTTP/2 connection coalescing). Stored in `acme/acme.json` (gitignored).
 - **DNS:** AdGuard rewrites `*.hgoncalves.uk` → NAS, so new hostnames need no DNS change. `www` is excepted (answer `A`).
-- **Access:** `lan-only` middleware = `192.168.1.0/24`, the same rule as NPM's "Local Only Boards" list. Public routes (Immich `photos`, OpenCloud `drive`, Collabora) omit it.
+- **Access layers** (`dynamic/middlewares.yml`):
+  - **public** — no middleware: `photos`, `drive`, `collabora`.
+  - **`private`** — LAN + the owner's Tailscale devices: every other route.
+  - **`lan-only`** — home LAN only: `router`.
 - **Dashboard:** `https://traefik.hgoncalves.uk` (LAN only).
 
 ## Adding a service
@@ -16,7 +19,7 @@ Add a router and a service to `dynamic/routes.yml`:
     myapp:
       rule: Host(`myapp.hgoncalves.uk`)
       service: myapp
-      middlewares: [lan-only]
+      middlewares: [private]
 # ...
     myapp:
       loadBalancer: {servers: [{url: http://127.0.0.1:1234}]}

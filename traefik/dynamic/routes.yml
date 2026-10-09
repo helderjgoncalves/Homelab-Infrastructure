@@ -15,15 +15,16 @@ http:
       rule: Host(`collabora.hgoncalves.uk`)
       service: collabora
 
-    # --- LAN only ---
+    # --- Private (LAN + Tailscale) unless noted ---
     dash:
       rule: Host(`dash.hgoncalves.uk`)
       service: dash
-      middlewares: [lan-only]
+      middlewares: [private]
     nas:
       rule: Host(`nas.hgoncalves.uk`)
       service: nas
-      middlewares: [lan-only]
+      middlewares: [private]
+    # Home LAN only, by choice: no Tailscale access to the ONT.
     router:
       rule: Host(`router.hgoncalves.uk`)
       service: router
@@ -31,51 +32,51 @@ http:
     dns:
       rule: Host(`dns.hgoncalves.uk`)
       service: dns
-      middlewares: [lan-only]
+      middlewares: [private]
     traefik:
       rule: Host(`traefik.hgoncalves.uk`)
       service: api@internal
-      middlewares: [lan-only]
+      middlewares: [private]
     dockge:
       rule: Host(`dockge.hgoncalves.uk`)
       service: dockge
-      middlewares: [lan-only]
+      middlewares: [private]
     kuma:
       rule: Host(`kuma.hgoncalves.uk`)
       service: kuma
-      middlewares: [lan-only]
+      middlewares: [private]
     beszel:
       rule: Host(`beszel.hgoncalves.uk`)
       service: beszel
-      middlewares: [lan-only]
+      middlewares: [private]
     ntfy:
       rule: Host(`ntfy.hgoncalves.uk`)
       service: ntfy
-      middlewares: [lan-only]
+      middlewares: [private]
     qbittorrent:
       rule: Host(`qbittorrent.hgoncalves.uk`)
       service: qbittorrent
-      middlewares: [lan-only]
+      middlewares: [private]
     sonarr:
       rule: Host(`sonarr.hgoncalves.uk`)
       service: sonarr
-      middlewares: [lan-only]
+      middlewares: [private]
     radarr:
       rule: Host(`radarr.hgoncalves.uk`)
       service: radarr
-      middlewares: [lan-only]
+      middlewares: [private]
     prowlarr:
       rule: Host(`prowlarr.hgoncalves.uk`)
       service: prowlarr
-      middlewares: [lan-only]
+      middlewares: [private]
     maintainerr:
       rule: Host(`maintainerr.hgoncalves.uk`)
       service: maintainerr
-      middlewares: [lan-only]
+      middlewares: [private]
     requests:
       rule: Host(`requests.hgoncalves.uk`)
       service: requests
-      middlewares: [lan-only]
+      middlewares: [private]
 
   services:
     photos:
