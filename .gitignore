@@ -115,6 +115,9 @@ appdata/
 **/opencloud/certs/
 **/opencloud/.git/
 **/nextcloud/data/
+# OpenCloud runtime state written at the repo root
+/.oc-nodes/
+/.oc-tmp/
 
 # Beszel runtime
 **/beszel/data/
@@ -250,6 +253,9 @@ $RECYCLE.BIN/
 
 # Cursor
 .cursor/
+
+# Local scratch space (screenshots, notes)
+/.space/
 
 # Vim / Emacs
 *.swp
