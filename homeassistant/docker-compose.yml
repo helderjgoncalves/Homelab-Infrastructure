@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     # Host networking is the HA-recommended mode: required for mDNS / SSDP /
     # HomeKit / Matter / Cast / Wiz / etc. device discovery. The web UI is
-    # exposed on the host's port 8123 — proxy it via NPM.
+    # exposed on the host's port 8123 — proxy it via Traefik.
     network_mode: host
     privileged: true
     environment:

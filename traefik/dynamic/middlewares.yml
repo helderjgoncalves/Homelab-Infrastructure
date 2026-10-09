@@ -1,0 +1,35 @@
+http:
+  middlewares:
+    # Applied to every router on websecure (see the entrypoint flags).
+    hsts:
+      headers:
+        stsSeconds: 63072000
+
+    # LAN and the owner's Tailscale device only. Tunnel traffic arrives from
+    # cloudflared's bridge IP, so this also keeps a router off the internet.
+    lan-only:
+      ipAllowList:
+        sourceRange:
+          - 192.168.1.0/24
+          - 100.98.39.35/32
+          - 100.99.86.43/32
+
+    # Cloudflare's cookies are domain-scoped, so the browser sends cf_clearance
+    # and CF_Authorization to every *.hgoncalves.uk name. The ONT's small header
+    # buffer can't cope: keep only its own session cookie (named "Cookie").
+    # The plugin applies the regex to each ;-separated cookie, so every other
+    # cookie becomes an empty segment — e.g. ";Cookie=abc;".
+    router-cookie:
+      plugin:
+        htransformation:
+          Rules:
+            - Name: keep-only-ont-session
+              Header: ^Cookie$
+              Type: RewriteValueRule
+              Value: (?i)^(cookie=.*)$|^.*$
+              ValueReplace: $1
+
+  serversTransports:
+    # For origins that only speak HTTPS with a self-signed cert (QTS, ONT).
+    insecure:
+      insecureSkipVerify: true

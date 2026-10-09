@@ -21,9 +21,9 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU passthrough (`/dev/dri`); CPU machine-learning image |
 | [`media-automation/`](./media-automation/) | qBittorrent + Prowlarr + Radarr + Sonarr + Maintainerr + Seerr (Watchlist/Seerr requests → downloads → cleanup) | Single `DATA_DIR` mount for hardlinks; WebUIs on loopback; legacy qBittorrent mounts in the gitignored override |
 | [`nas-host/`](./nas-host/) | Host plumbing for the DNS container (not a stack) | macvlan network, shim, `/etc/resolv.conf` and the QTS boot hook; `bootstrap.sh` once per host |
-| [`npm/`](./npm/) | Nginx Proxy Manager — TLS + per-host routing | Rules live in NPM's SQLite, not in Git |
 | [`ntfy/`](./ntfy/) | Push notification server | Alert sink for Kuma + Beszel; iOS via the ntfy.sh upstream relay |
 | [`opencloud/`](./opencloud/) | File sync + collaboration suite | OpenCloud + Collabora + Keycloak + LDAP behind Traefik |
+| [`traefik/`](./traefik/) | Reverse proxy — TLS + per-host routing | Routes in `dynamic/routes.yml`, one cert per hostname via Cloudflare DNS-01 |
 | [`uptime-kuma/`](./uptime-kuma/) | Uptime monitoring | Liveness probes + outbound deadman heartbeat |
 
 Each stack folder typically contains:
@@ -59,7 +59,7 @@ Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 │                                                                            │
 │   ┌──────────────┐    ┌────────────────┐    ┌──────────────────────────┐   │
 │   │ cloudflared  │───▶│ Reverse Proxy  │───▶│ Self-hosted services     │   │
-│   │ (tunnel)     │    │ (NPM, HTTPS)   │    │ Immich, OpenCloud,       │   │
+│   │ (tunnel)     │    │ (Traefik)      │    │ Immich, OpenCloud,       │   │
 │   └──────────────┘    └────────────────┘    │ ntfy, qBittorrent,       │   │
 │                                             │ devbox (SSH)             │   │
 │                                             └──────────────────────────┘   │
@@ -80,8 +80,7 @@ Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 - **One name everywhere.** Public hostnames (e.g. `photos.example.com`) resolve to Cloudflare from the internet, and to internal IPs from the LAN via **AdGuard Home DNS rewrites**. Same URLs, same TLS, same auth — anywhere.
 - **HTTPS everywhere**, including LAN-only paths. No plaintext between hops.
 - **Auth at the edge.** Cloudflare Access enforces SSO/OAuth for humans; service tokens and **mTLS** for machine-to-machine. Origin services additionally validate Cloudflare's signed JWT / client cert.
-- **Loopback-bound UIs.** Service WebUIs publish to `127.0.0.1` so the normal path is via NPM + Cloudflare Access rather than a LAN bypass. Three deliberate exceptions, each for a structural reason:
-  - **NPM's admin UI on `:81`** — NPM runs `network_mode: host` because it proxies every other stack over the host loopback, so a bind address cannot be set. Filter port 81 at the host firewall instead.
+- **Loopback-bound UIs.** Service WebUIs publish to `127.0.0.1` so the normal path is via Traefik (+ Cloudflare Access for public names) rather than a LAN bypass. Traefik itself runs `network_mode: host` to reach those loopback origins, and publishes only 80/443 — its dashboard is a LAN-only route, not an open port. Two deliberate exceptions, each for a structural reason:
   - **devbox SSH on `:2222`** — the LAN dev entry point, so it must work without a tunnel. Public-key auth only, root login disabled.
   - **AdGuard Home on its own macvlan IP** — a DNS server has to be reachable by LAN clients, and macvlan gives the container a real LAN address, so its admin UI is reachable there too.
 - **Declarative.** Every stack is described as code (`docker-compose.yml`, env templates). Config lives here; runtime data does not.
@@ -96,7 +95,7 @@ Four layers, each catches what the others can't, all alerts converge on **ntfy**
 | --- | --- | --- | --- | --- |
 | 1. Liveness | [Uptime Kuma](./uptime-kuma/) | NAS (internal) | Per-container Docker state + loopback HTTP-keyword probes | Catches "app crashed" / "container restart loop" before users notice |
 | 2. Resources | [Beszel](./beszel/) | NAS (internal) | CPU, RAM, disk, temperature, per-container metrics | Catches "disk filling", "OOM kills", "thermal throttling" — thresholds, not liveness |
-| 3. End-to-end | [Better Stack](https://betterstack.com/) (free tier) | External | Public probes of user-facing services (Immich, OpenCloud) | Validates the full path: DNS → CF edge → tunnel → cloudflared → NPM → app. Survives the NAS being completely down. |
+| 3. End-to-end | [Better Stack](https://betterstack.com/) (free tier) | External | Public probes of user-facing services (Immich, OpenCloud) | Validates the full path: DNS → CF edge → tunnel → cloudflared → Traefik → app. Survives the NAS being completely down. |
 | 4. Deadman | Better Stack heartbeat | External (Kuma pings out) | NAS itself is alive and on the internet | Layers 1–2 can't alert when they're the thing that's down. Kuma hits the heartbeat URL on every check; absence = page. |
 
 **Alert sink:** all four layers fan out to a self-hosted ntfy instance → push to phone. One channel, one inbox, one rate-limited topic.
@@ -144,7 +143,7 @@ admin surfaces are reachable and how they are contained.
 
 | State | Lives in | Recovered from |
 | --- | --- | --- |
-| Proxy hosts, TLS certs | NPM's SQLite (`npm/data`, `npm/letsencrypt`) | NAS snapshot; certs re-issue on demand |
+| TLS certs, ACME account | Traefik (`traefik/acme/acme.json`) | NAS snapshot; certs re-issue on demand (routes themselves are in Git) |
 | DNS rewrites, allow/deny lists | AdGuard Home (`adguard/conf/AdGuardHome.yaml`) | Rendered from the tracked [`AdGuardHome.yaml.example`](./adguard/conf/AdGuardHome.yaml.example); query log and stats (`adguard/work`) from NAS snapshot |
 | Monitors, notification channels | Uptime Kuma SQLite (`uptime-kuma/`) | NAS snapshot |
 | Dashboards, alert rules | Beszel SQLite (`beszel/data`) | NAS snapshot |

@@ -1,0 +1,118 @@
+# One router + one service per hostname. Adding a service:
+#   1. copy a block below, change the name, host and URL
+#   2. save — Traefik reloads and issues the cert on its own
+# DNS needs nothing new: AdGuard rewrites *.hgoncalves.uk to the NAS.
+http:
+  routers:
+    # --- Public (reachable through the Cloudflare tunnel) ---
+    photos:
+      rule: Host(`photos.hgoncalves.uk`)
+      service: photos
+    drive:
+      rule: Host(`drive.hgoncalves.uk`)
+      service: drive
+    collabora:
+      rule: Host(`collabora.hgoncalves.uk`)
+      service: collabora
+
+    # --- LAN only ---
+    dash:
+      rule: Host(`dash.hgoncalves.uk`)
+      service: dash
+      middlewares: [lan-only]
+    nas:
+      rule: Host(`nas.hgoncalves.uk`)
+      service: nas
+      middlewares: [lan-only]
+    router:
+      rule: Host(`router.hgoncalves.uk`)
+      service: router
+      middlewares: [lan-only, router-cookie]
+    dns:
+      rule: Host(`dns.hgoncalves.uk`)
+      service: dns
+      middlewares: [lan-only]
+    traefik:
+      rule: Host(`traefik.hgoncalves.uk`)
+      service: api@internal
+      middlewares: [lan-only]
+    dockge:
+      rule: Host(`dockge.hgoncalves.uk`)
+      service: dockge
+      middlewares: [lan-only]
+    kuma:
+      rule: Host(`kuma.hgoncalves.uk`)
+      service: kuma
+      middlewares: [lan-only]
+    beszel:
+      rule: Host(`beszel.hgoncalves.uk`)
+      service: beszel
+      middlewares: [lan-only]
+    ntfy:
+      rule: Host(`ntfy.hgoncalves.uk`)
+      service: ntfy
+      middlewares: [lan-only]
+    qbittorrent:
+      rule: Host(`qbittorrent.hgoncalves.uk`)
+      service: qbittorrent
+      middlewares: [lan-only]
+    sonarr:
+      rule: Host(`sonarr.hgoncalves.uk`)
+      service: sonarr
+      middlewares: [lan-only]
+    radarr:
+      rule: Host(`radarr.hgoncalves.uk`)
+      service: radarr
+      middlewares: [lan-only]
+    prowlarr:
+      rule: Host(`prowlarr.hgoncalves.uk`)
+      service: prowlarr
+      middlewares: [lan-only]
+    maintainerr:
+      rule: Host(`maintainerr.hgoncalves.uk`)
+      service: maintainerr
+      middlewares: [lan-only]
+    requests:
+      rule: Host(`requests.hgoncalves.uk`)
+      service: requests
+      middlewares: [lan-only]
+
+  services:
+    photos:
+      loadBalancer: {servers: [{url: http://127.0.0.1:2283}]}
+    drive:
+      loadBalancer: {servers: [{url: http://127.0.0.1:9200}]}
+    collabora:
+      loadBalancer: {servers: [{url: http://127.0.0.1:9980}]}
+    dash:
+      loadBalancer: {servers: [{url: http://127.0.0.1:8085}]}
+    nas:
+      loadBalancer:
+        servers: [{url: https://127.0.0.1:5766}]
+        serversTransport: insecure
+    router:
+      loadBalancer:
+        servers: [{url: https://192.168.1.1}]
+        serversTransport: insecure
+    dns:
+      loadBalancer: {servers: [{url: http://192.168.1.2}]}
+    dockge:
+      loadBalancer: {servers: [{url: http://127.0.0.1:5001}]}
+    kuma:
+      loadBalancer: {servers: [{url: http://127.0.0.1:3001}]}
+    beszel:
+      loadBalancer: {servers: [{url: http://127.0.0.1:8090}]}
+    ntfy:
+      loadBalancer: {servers: [{url: http://127.0.0.1:8088}]}
+    qbittorrent:
+      loadBalancer: {servers: [{url: http://127.0.0.1:9080}]}
+    sonarr:
+      loadBalancer: {servers: [{url: http://127.0.0.1:8989}]}
+    radarr:
+      loadBalancer: {servers: [{url: http://127.0.0.1:7878}]}
+    prowlarr:
+      loadBalancer: {servers: [{url: http://127.0.0.1:9696}]}
+    maintainerr:
+      loadBalancer: {servers: [{url: http://127.0.0.1:6246}]}
+    requests:
+      loadBalancer: {servers: [{url: http://127.0.0.1:5055}]}

@@ -93,12 +93,11 @@ appdata/
 
 # Reverse proxy runtime artifacts
 **/traefik/acme.json
+**/traefik/acme/
 **/traefik/letsencrypt/
 **/caddy/data/
 **/caddy/config/
 **/nginx/letsencrypt/
-**/npm/data/
-**/npm/letsencrypt/
 
 # Immich
 **/immich/upload/

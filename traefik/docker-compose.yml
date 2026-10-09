@@ -1,0 +1,73 @@
+name: traefik
+services:
+  traefik:
+    image: traefik:v3
+    container_name: traefik
+    restart: unless-stopped
+    # Every stack binds its UI to 127.0.0.1, so the proxy
+    # must share the host's network namespace to reach those origins.
+    network_mode: host
+    command:
+      # Static config lives here (Traefik reads exactly one static source, and
+      # CLI flags are the one that can use .env values). Routes live in
+      # dynamic/*.yml and hot-reload without a restart.
+      - --global.checkNewVersion=false
+      - --global.sendAnonymousUsage=false
+      - --log.level=INFO
+      - --ping=true
+      - --ping.entryPoint=ping
+      - --entrypoints.ping.address=127.0.0.1:8082
+      - --api.dashboard=true
+      - --api.disableDashboardAd=true
+
+      - --entrypoints.web.address=:${TRAEFIK_HTTP_PORT:-80}
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+      - --entrypoints.websecure.address=:${TRAEFIK_HTTPS_PORT:-443}
+      # Routers with no entryPoints attach here only. Every one of them gets a
+      # cert for exactly its own Host() — never a wildcard (HTTP/2 connection
+      # coalescing across names behind one wildcard cert misroutes requests).
+      - --entrypoints.websecure.asDefault=true
+      - --entrypoints.websecure.http.tls.certResolver=cf
+      - --entrypoints.websecure.http.middlewares=hsts@file
+
+      - --certificatesresolvers.cf.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env}
+      - --certificatesresolvers.cf.acme.storage=/acme/acme.json
+      - --certificatesresolvers.cf.acme.keyType=EC256
+      - --certificatesresolvers.cf.acme.caServer=${ACME_CA_SERVER:-https://acme-v02.api.letsencrypt.org/directory}
+      - --certificatesresolvers.cf.acme.dnsChallenge.provider=cloudflare
+      # Public resolvers for the propagation check: the LAN resolver rewrites
+      # *.hgoncalves.uk to the NAS and would never see the TXT record.
+      - --certificatesresolvers.cf.acme.dnsChallenge.resolvers=1.1.1.1:53,1.0.0.1:53
+
+      # Request-header regex rewrite (router cookie fix in middlewares.yml).
+      # Fetched from the Traefik plugin catalog at startup.
+      - --experimental.plugins.htransformation.moduleName=github.com/tomMoulard/htransformation
+      - --experimental.plugins.htransformation.version=v0.4.1
+
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+    environment:
+      - TZ=Europe/Lisbon
+      # Cloudflare API token with Zone:DNS:Edit on hgoncalves.uk.
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:?set CF_DNS_API_TOKEN in .env}
+    volumes:
+      - ./dynamic:/etc/traefik/dynamic:ro
+      - ./acme:/acme
+    healthcheck:
+      test:
+        - CMD
+        - traefik
+        - healthcheck
+        - --ping
+        - --ping.entryPoint=ping
+        - --entrypoints.ping.address=127.0.0.1:8082
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
