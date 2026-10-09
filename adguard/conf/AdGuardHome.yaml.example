@@ -1,0 +1,111 @@
+# AdGuard Home — tracked config template. Placeholder tokens are filled from
+# .env by scripts/render-config.sh. Only non-default settings are listed;
+# everything else keeps AdGuard Home's defaults. See README.md.
+
+# Must match the pinned image's LastSchemaVersion. Higher = startup error.
+schema_version: 34
+
+http:
+  # AdGuard Home's default is 3000; :80 is safe here because the container has
+  # its own macvlan LAN address.
+  address: 0.0.0.0:80
+
+users:
+  - name: __ADGUARD_ADMIN_USER__
+    password: __ADGUARD_ADMIN_PASSWORD_HASH__
+
+dns:
+  # IP literals, not a hostname: Container Station hard-codes `dockerd --dns`
+  # at this resolver, so a hostname upstream needs it to resolve its own
+  # upstream. Cloudflare's cert carries 1.1.1.1/1.0.0.1 as IP SANs.
+  # Third entry keeps the router's zone off DoH.
+  upstream_dns:
+    - https://1.1.1.1/dns-query
+    - https://1.0.0.1/dns-query
+    - '[/__LOCAL_DOMAIN__/]__LAN_GATEWAY__'
+
+  # Unused while every upstream above is an IP literal, but pinned to
+  # Cloudflare so a hostname upstream added later cannot resolve elsewhere.
+  bootstrap_dns:
+    - 1.1.1.1
+    - 1.0.0.1
+
+  # Without this, a macvlan container with its own LAN address is an open
+  # resolver. Default is empty = answer anyone.
+  allowed_clients:
+    - __LAN_SUBNET__
+
+  # LAN reverse lookups go to the router, as Pi-hole's rev-server did.
+  local_ptr_upstreams:
+    - __LAN_GATEWAY__
+
+filtering:
+  # Explicit per host, not a `*.zone` wildcard — a wildcard would also capture
+  # names meant to resolve to the public Cloudflare edge.
+  #
+  # `enabled` must be spelled out: omit it and AdGuard Home reads the missing
+  # key as false, silently persisting every rewrite in a disabled state.
+  rewrites:
+    - domain: dns.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: beszel.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: cloud.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: collabora.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: dockge.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: immich.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: nas.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: ntfy.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: qbittorrent.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: router.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+    - domain: uptime.__PUBLIC_ZONE__
+      answer: __NAS_IP__
+      enabled: true
+
+# Replaces AdGuard Home's two default lists.
+filters:
+  - enabled: true
+    id: 1
+    name: Steven Black — Fake News Hosts
+    url: https://raw.githubusercontent.com/StevenBlack/hosts/master/extensions/fakenews/hosts
+  - enabled: true
+    id: 3
+    name: HaGeZi Multi Pro
+    url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt
+  - enabled: true
+    id: 4
+    name: HaGeZi Threat Intelligence Feeds
+    url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt
+  - enabled: true
+    id: 5
+    name: Perflyst SmartTV Blocklist
+    url: https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV.txt
+  # Stops clients using their own DoH/VPN/proxy to bypass this resolver -
+  # without it, filtering is optional from the client's point of view.
+  - enabled: true
+    id: 6
+    name: HaGeZi DoH/VPN/Proxy Bypass
+    url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/doh-vpn-proxy-bypass.txt
+
+# Pi-hole's deny rules (tracker1.bt.moack.co.kr, regex /tracker\./) were not
+# carried over: the unanchored regex also blocked public BitTorrent trackers
+# (tracker.opentrackr.org, ...) that qBittorrent needs to find peers.
+user_rules: []

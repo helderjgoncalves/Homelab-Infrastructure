@@ -1,0 +1,48 @@
+# AdGuard Home — DNS + ad/tracker blocking, DoH upstreams. See README.md.
+#
+# Prerequisites: the macvlan network in MACVLAN_NETWORK exists (created by
+# nas-host/scripts/bootstrap.sh), and conf/AdGuardHome.yaml has been rendered
+# with scripts/render-config.sh.
+
+name: adguard
+
+services:
+  adguard:
+    container_name: adguard
+    # Pinned: conf/AdGuardHome.yaml.example declares schema_version 34, which
+    # is this release's LastSchemaVersion. Bump both together.
+    image: adguard/adguardhome:v0.107.79
+    networks:
+      macvlan_dns:
+        ipv4_address: ${ADGUARD_IP:?set ADGUARD_IP in .env}
+    # No `ports:` on purpose. Publishing is a no-op for a macvlan-only
+    # container and silently takes effect the moment any bridge network is
+    # attached.
+    environment:
+      TZ: Europe/Lisbon
+    volumes:
+      - ./conf:/opt/adguardhome/conf
+      - ./work:/opt/adguardhome/work
+    healthcheck:
+      # Assumes busybox wget. Drop this block if the container reports
+      # unhealthy while DNS works.
+      test:
+        - CMD-SHELL
+        - wget -q --tries=1 --spider http://127.0.0.1:80/ || exit 1
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    restart: unless-stopped
+
+networks:
+  # External macvlan network owned by nas-host/. Its live name is still
+  # `macvlan_pihole`; renaming it means recreating the network.
+  macvlan_dns:
+    external: true
+    name: ${MACVLAN_NETWORK:-macvlan_pihole}

@@ -1,13 +1,13 @@
 #!/bin/sh
 # -----------------------------------------------------------------------------
-# Pi-hole shim watchdog
+# DNS shim watchdog
 # -----------------------------------------------------------------------------
-# Re-asserts the host-side state Pi-hole needs, repairing only what is actually
-# missing:
+# Re-asserts the host-side state the DNS container needs, repairing only what
+# is actually missing:
 #   1. macvlan shim interface exists
-#   2. shim carries PIHOLE_SHIM_IP and is up
-#   3. host route to PIHOLE_IP goes over the shim
-#   4. /etc/resolv.conf points at Pi-hole
+#   2. shim carries SHIM_IP and is up
+#   3. host route to DNS_IP goes over the shim
+#   4. /etc/resolv.conf points at the DNS container
 #
 # Each property is checked independently on purpose. The previous scripts
 # guarded all four behind a single "does the interface exist?" test, so an
@@ -25,7 +25,7 @@ set -u
 
 SHIM_IFACE="macvlan_shim0"
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-LOG="${SCRIPT_DIR}/pihole-watchdog.log"
+LOG="${SCRIPT_DIR}/dns-watchdog.log"
 LOG_MAX_LINES=500
 
 log() { echo "[$(date)] $*" >> "$LOG"; }
@@ -50,7 +50,7 @@ else
   exit 1
 fi
 
-for var in PIHOLE_PARENT_IFACE PIHOLE_SHIM_IP PIHOLE_IP; do
+for var in PARENT_IFACE SHIM_IP DNS_IP; do
   eval "value=\${${var}:-}"
   if [ -z "$value" ]; then
     log "ERROR: ${var} is not set (check ${SCRIPT_DIR}/../.env)."
@@ -64,13 +64,13 @@ done
 # marker file disappears on reboot. This is what turns a reboot into evidence.
 # The pre-pass is --fast: its probes would run against a resolver that is still
 # broken, and every timeout is time the NAS spends without DNS.
-BOOT_MARKER="/tmp/.pihole-watchdog-boot-seen"
-DIAG="${SCRIPT_DIR}/pihole-diag.sh"
+BOOT_MARKER="/tmp/.dns-watchdog-boot-seen"
+DIAG="${SCRIPT_DIR}/dns-diag.sh"
 first_run_since_boot=0
 if [ ! -f "$BOOT_MARKER" ]; then
   first_run_since_boot=1
   : > "$BOOT_MARKER" 2>/dev/null
-  log "first run since boot (uptime $(cut -d. -f1 /proc/uptime 2>/dev/null)s) — see pihole-diag.log"
+  log "first run since boot (uptime $(cut -d. -f1 /proc/uptime 2>/dev/null)s) — see dns-diag.log"
   [ -x "$DIAG" ] && "$DIAG" PRE-REPAIR --fast
 fi
 
@@ -79,13 +79,13 @@ failed=0   # non-zero exit tells autorun.sh to retry
 
 # 1. Shim interface -----------------------------------------------------------
 if ! ip link show "$SHIM_IFACE" >/dev/null 2>&1; then
-  if ip link add "$SHIM_IFACE" link "$PIHOLE_PARENT_IFACE" type macvlan \
+  if ip link add "$SHIM_IFACE" link "$PARENT_IFACE" type macvlan \
       mode bridge 2>>"$LOG"; then
-    log "created ${SHIM_IFACE} (parent=${PIHOLE_PARENT_IFACE})"
+    log "created ${SHIM_IFACE} (parent=${PARENT_IFACE})"
     repaired=1
   else
     # Parent not ready yet (early boot) — autorun.sh retries.
-    log "ERROR: failed to create ${SHIM_IFACE} on ${PIHOLE_PARENT_IFACE}"
+    log "ERROR: failed to create ${SHIM_IFACE} on ${PARENT_IFACE}"
     trim_log
     exit 1   # nothing else can work; let the caller retry
   fi
@@ -93,12 +93,12 @@ fi
 
 # 2. Shim address -------------------------------------------------------------
 if ! ip -4 addr show dev "$SHIM_IFACE" 2>/dev/null |
-     grep -q "inet ${PIHOLE_SHIM_IP}/32"; then
-  if ip addr replace "${PIHOLE_SHIM_IP}/32" dev "$SHIM_IFACE" 2>>"$LOG"; then
-    log "assigned ${PIHOLE_SHIM_IP}/32 to ${SHIM_IFACE}"
+     grep -q "inet ${SHIM_IP}/32"; then
+  if ip addr replace "${SHIM_IP}/32" dev "$SHIM_IFACE" 2>>"$LOG"; then
+    log "assigned ${SHIM_IP}/32 to ${SHIM_IFACE}"
     repaired=1
   else
-    log "ERROR: failed to assign ${PIHOLE_SHIM_IP}/32 to ${SHIM_IFACE}"
+    log "ERROR: failed to assign ${SHIM_IP}/32 to ${SHIM_IFACE}"
     failed=1
   fi
 fi
@@ -117,14 +117,14 @@ case "$(ip link show "$SHIM_IFACE" 2>/dev/null)" in
     ;;
 esac
 
-# 4. Host route to Pi-hole ----------------------------------------------------
-if ! ip route show "${PIHOLE_IP}/32" 2>/dev/null |
+# 4. Host route to the DNS container -------------------------------------------
+if ! ip route show "${DNS_IP}/32" 2>/dev/null |
      grep -q "dev ${SHIM_IFACE}"; then
-  if ip route replace "${PIHOLE_IP}/32" dev "$SHIM_IFACE" 2>>"$LOG"; then
-    log "set route ${PIHOLE_IP}/32 -> ${SHIM_IFACE}"
+  if ip route replace "${DNS_IP}/32" dev "$SHIM_IFACE" 2>>"$LOG"; then
+    log "set route ${DNS_IP}/32 -> ${SHIM_IFACE}"
     repaired=1
   else
-    log "ERROR: failed to set route ${PIHOLE_IP}/32 -> ${SHIM_IFACE}"
+    log "ERROR: failed to set route ${DNS_IP}/32 -> ${SHIM_IFACE}"
     failed=1
   fi
 fi
@@ -134,21 +134,22 @@ fi
 # optional. QTS points /etc/resolv.conf at 127.0.1.1, its own dnsmasq, and
 # /etc sits on the ramdisk root so that is restored on every boot. That dnsmasq
 # binds each upstream to the interface the DNS is configured on — its log shows
-# "using nameserver 192.168.1.2#53(via eth0)" — and eth0 cannot reach Pi-hole,
+# "using nameserver 192.168.1.2#53(via eth0)" — and eth0 cannot reach the DNS
+# container,
 # because the kernel drops traffic from a parent interface to its own macvlan
 # child. Every query it forwards therefore goes to the router instead.
 #
 # So the point of writing this file is to bypass QTS's dnsmasq entirely and
-# talk to Pi-hole directly over the shim. Setting the DNS server in Control
-# Panel does NOT achieve this: that only feeds dnsmasq's upstream list.
+# talk to the DNS container directly over the shim. Setting the DNS server in
+# Control Panel does NOT achieve this: that only feeds dnsmasq's upstream list.
 #
 # Written only when it differs, so the mtime still shows when something else
 # last clobbered it.
-RESOLV_WANT="nameserver ${PIHOLE_IP}"
+RESOLV_WANT="nameserver ${DNS_IP}"
 RESOLV_WAS=$(cat /etc/resolv.conf 2>/dev/null | tr '\n' ' ')
 if [ "$(cat /etc/resolv.conf 2>/dev/null)" != "$RESOLV_WANT" ]; then
   if echo "$RESOLV_WANT" > /etc/resolv.conf 2>>"$LOG"; then
-    log "rewrote /etc/resolv.conf -> ${PIHOLE_IP} (was: ${RESOLV_WAS})"
+    log "rewrote /etc/resolv.conf -> ${DNS_IP} (was: ${RESOLV_WAS})"
     repaired=1
   else
     log "ERROR: failed to write /etc/resolv.conf"

@@ -12,16 +12,17 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 
 | Stack | Purpose | Notes |
 | --- | --- | --- |
+| [`adguard/`](./adguard/) | LAN DNS + ad/tracker blocking + local DNS rewrites, DoH upstream | macvlan IP; needs [`nas-host/`](./nas-host/) set up first |
 | [`beszel/`](./beszel/) | Lightweight server + container monitoring | Hub + agent on the NAS; SQLite history |
 | [`cloudflared/`](./cloudflared/) | Cloudflare Tunnel — outbound-only ingress | Token-based; routes managed in CF dashboard |
 | [`devbox/`](./devbox/) | Debian bookworm SSH dev environment | Built from `dockerfile_inline` in the compose file; mounts the repo at `/projects`. SSH on `2222` is a deliberate LAN exception |
 | [`dockge/`](./dockge/) | Compose stack manager (web UI) | Manages every stack in this repo from `STACKS_DIR` |
 | [`homeassistant/`](./homeassistant/) | Home automation | `network_mode: host` + `privileged: true` for device/mDNS discovery |
 | [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU passthrough (`/dev/dri`); CPU machine-learning image |
+| [`nas-host/`](./nas-host/) | Host plumbing for the DNS container (not a stack) | macvlan network, shim, `/etc/resolv.conf` and the QTS boot hook; `bootstrap.sh` once per host |
 | [`npm/`](./npm/) | Nginx Proxy Manager — TLS + per-host routing | Rules live in NPM's SQLite, not in Git |
 | [`ntfy/`](./ntfy/) | Push notification server | Alert sink for Kuma + Beszel; iOS via the ntfy.sh upstream relay |
 | [`opencloud/`](./opencloud/) | File sync + collaboration suite | OpenCloud + Collabora + Keycloak + LDAP behind Traefik |
-| [`pihole/`](./pihole/) | Recursive DNS + ad/tracker blocking + local DNS rewrites | macvlan; needs `bootstrap.sh` once per host |
 | [`qbittorrent/`](./qbittorrent/) | Torrent client | WebUI bound to loopback only |
 | [`uptime-kuma/`](./uptime-kuma/) | Uptime monitoring | Liveness probes + outbound deadman heartbeat |
 
@@ -31,7 +32,7 @@ Each stack folder typically contains:
 - `.env.example` — copy to `.env` and fill in. Only stacks that actually
   reference variables have one; `homeassistant/`, `uptime-kuma/` and `devbox/`
   need no configuration
-- optional `bootstrap.sh` for one-time host prep (e.g. Pi-hole's macvlan network)
+- host-level prep (the DNS macvlan network, shim and boot hook) lives in [`nas-host/`](./nas-host/), not in a stack
 
 Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 
@@ -64,7 +65,7 @@ Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 │                                             └──────────────────────────┘   │
 │                                                                            │
 │   ┌──────────────┐    ┌────────────────┐    ┌──────────────────────────┐   │
-│   │ Pi-hole      │    │ Dockge         │    │ Monitoring               │   │
+│   │ AdGuard Home │    │ Dockge         │    │ Monitoring               │   │
 │   │ (DNS + local │    │ (stack mgmt)   │    │ Uptime Kuma + Beszel     │   │
 │   │  rewrites)   │    │                │    │ → ntfy (push alerts)     │   │
 │   └──────────────┘    └────────────────┘    └──────────────────────────┘   │
@@ -76,13 +77,13 @@ Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 ### Key design choices
 
 - **No inbound ports.** All external traffic enters via **Cloudflare Tunnel**; the home router exposes nothing.
-- **One name everywhere.** Public hostnames (e.g. `photos.example.com`) resolve to Cloudflare from the internet, and to internal IPs from the LAN via **Pi-hole local rewrites**. Same URLs, same TLS, same auth — anywhere.
+- **One name everywhere.** Public hostnames (e.g. `photos.example.com`) resolve to Cloudflare from the internet, and to internal IPs from the LAN via **AdGuard Home DNS rewrites**. Same URLs, same TLS, same auth — anywhere.
 - **HTTPS everywhere**, including LAN-only paths. No plaintext between hops.
 - **Auth at the edge.** Cloudflare Access enforces SSO/OAuth for humans; service tokens and **mTLS** for machine-to-machine. Origin services additionally validate Cloudflare's signed JWT / client cert.
 - **Loopback-bound UIs.** Service WebUIs publish to `127.0.0.1` so the normal path is via NPM + Cloudflare Access rather than a LAN bypass. Three deliberate exceptions, each for a structural reason:
   - **NPM's admin UI on `:81`** — NPM runs `network_mode: host` because it proxies every other stack over the host loopback, so a bind address cannot be set. Filter port 81 at the host firewall instead.
   - **devbox SSH on `:2222`** — the LAN dev entry point, so it must work without a tunnel. Public-key auth only, root login disabled.
-  - **Pi-hole on its own macvlan IP** — a DNS server has to be reachable by LAN clients, and macvlan gives the container a real LAN address, so its admin UI is reachable there too.
+  - **AdGuard Home on its own macvlan IP** — a DNS server has to be reachable by LAN clients, and macvlan gives the container a real LAN address, so its admin UI is reachable there too.
 - **Declarative.** Every stack is described as code (`docker-compose.yml`, env templates). Config lives here; runtime data does not.
 
 ---
@@ -144,7 +145,7 @@ admin surfaces are reachable and how they are contained.
 | State | Lives in | Recovered from |
 | --- | --- | --- |
 | Proxy hosts, TLS certs | NPM's SQLite (`npm/data`, `npm/letsencrypt`) | NAS snapshot; certs re-issue on demand |
-| DNS rewrites, allow/deny lists | Pi-hole (`pihole/etc-pihole`) | NAS snapshot; partially mirrored in [`pihole/lists.yaml`](./pihole/lists.yaml) |
+| DNS rewrites, allow/deny lists | AdGuard Home (`adguard/conf/AdGuardHome.yaml`) | Rendered from the tracked [`AdGuardHome.yaml.example`](./adguard/conf/AdGuardHome.yaml.example); query log and stats (`adguard/work`) from NAS snapshot |
 | Monitors, notification channels | Uptime Kuma SQLite (`uptime-kuma/`) | NAS snapshot |
 | Dashboards, alert rules | Beszel SQLite (`beszel/data`) | NAS snapshot |
 | Photos, albums, faces | Immich upload dir + Postgres | NAS snapshot for originals, plus a logical `pg_dump` for the database, restored from the same point in time |

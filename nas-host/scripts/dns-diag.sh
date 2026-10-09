@@ -1,16 +1,16 @@
 #!/bin/sh
 # -----------------------------------------------------------------------------
-# Pi-hole DNS diagnostic snapshot
+# DNS diagnostic snapshot
 # -----------------------------------------------------------------------------
 # Dumps everything that determines whether the NAS and its containers can
-# resolve names, to pihole-diag.log. Read-only: it changes nothing.
+# resolve names, to dns-diag.log. Read-only: it changes nothing.
 #
-# Called by pihole-watchdog.sh on its first run after a boot — once in --fast
+# Called by dns-watchdog.sh on its first run after a boot — once in --fast
 # mode before repairing, once in full mode after. The fast pass deliberately
 # skips every probe that can block: those probes run against a broken resolver
 # and each one that times out is time the NAS spends without DNS.
 #
-# Usage: ./pihole-diag.sh [TAG] [--fast]
+# Usage: ./dns-diag.sh [TAG] [--fast]
 # -----------------------------------------------------------------------------
 set -u
 
@@ -18,9 +18,9 @@ TAG=${1:-MANUAL}
 FAST=${2:-}
 SHIM_IFACE="macvlan_shim0"
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-LOG="${SCRIPT_DIR}/pihole-diag.log"
+LOG="${SCRIPT_DIR}/dns-diag.log"
 LOG_MAX_LINES=2000
-PIHOLE_HEALTH_WAIT=90   # seconds to let the container finish starting
+DNS_HEALTH_WAIT=90   # seconds to let the container finish starting
 
 if [ -f "${SCRIPT_DIR}/../.env" ]; then
   set -a
@@ -31,8 +31,8 @@ fi
 
 # No fallback values on purpose. Defaulting would keep this NAS's addressing in
 # a tracked file, and — worse — would let a missing .env produce a confident
-# report about the wrong addresses. Fail the same way pihole-watchdog.sh does.
-for var in PIHOLE_IP PIHOLE_SHIM_IP PIHOLE_PARENT_IFACE; do
+# report about the wrong addresses. Fail the same way dns-watchdog.sh does.
+for var in DNS_IP SHIM_IP PARENT_IFACE DNS_CONTAINER; do
   eval "value=\${${var}:-}"
   if [ -z "$value" ]; then
     echo "ERROR: ${var} is not set (check ${SCRIPT_DIR}/../.env)" >&2
@@ -47,26 +47,26 @@ out() { echo "$@" >> "$LOG"; }
 section() { out ""; out "-- $* --"; }
 now_s() { cut -d. -f1 /proc/uptime 2>/dev/null || echo 0; }
 
-# The host-side repair finishes long before the Pi-hole container is ready to
+# The host-side repair finishes long before the DNS container is ready to
 # answer, so probing immediately records timeouts that read like a failed boot
 # when they only mean "checked too early". Wait for it first — this runs after
 # the repair, in the background, so waiting costs nothing. Bounded on wall
 # clock rather than iterations, so a hanging docker CLI cannot stretch it.
-wait_for_pihole() {
+wait_for_dns() {
   run docker ps >/dev/null 2>&1 || return 0   # daemon down; section 7 reports that
   started=$(now_s)
-  deadline=$((started + PIHOLE_HEALTH_WAIT))
+  deadline=$((started + DNS_HEALTH_WAIT))
   while [ "$(now_s)" -lt "$deadline" ]; do
-    case "$(run docker inspect -f '{{.State.Health.Status}}' pihole 2>/dev/null)" in
+    case "$(run docker inspect -f '{{.State.Health.Status}}' "$DNS_CONTAINER" 2>/dev/null)" in
       healthy)
         waited=$(( $(now_s) - started ))
-        [ "$waited" -gt 1 ] && out "(waited ${waited}s for pihole to report healthy)"
+        [ "$waited" -gt 1 ] && out "(waited ${waited}s for ${DNS_CONTAINER} to report healthy)"
         return 0
         ;;
     esac
     sleep 2
   done
-  out "(pihole still not healthy after ${PIHOLE_HEALTH_WAIT}s — timeouts below are that, not a broken shim)"
+  out "(${DNS_CONTAINER} still not healthy after ${DNS_HEALTH_WAIT}s — timeouts below are that, not a broken shim)"
   return 1
 }
 
@@ -84,22 +84,22 @@ else
   out "ABSENT — nothing created it since boot"
 fi
 
-section "2. host route to Pi-hole (${PIHOLE_IP})"
-r=$(ip route show "${PIHOLE_IP}/32" 2>/dev/null)
-[ -n "$r" ] && out "$r" || out "NO /32 ROUTE — host will try to reach ${PIHOLE_IP} over ${PIHOLE_PARENT_IFACE}, which macvlan isolation blocks"
-out "ip route get: $(ip route get "${PIHOLE_IP}" 2>&1 | head -1)"
+section "2. host route to DNS (${DNS_IP})"
+r=$(ip route show "${DNS_IP}/32" 2>/dev/null)
+[ -n "$r" ] && out "$r" || out "NO /32 ROUTE — host will try to reach ${DNS_IP} over ${PARENT_IFACE}, which macvlan isolation blocks"
+out "ip route get: $(ip route get "${DNS_IP}" 2>&1 | head -1)"
 
 section "3. /etc/resolv.conf"
 out "mtime: $(ls -l /etc/resolv.conf 2>/dev/null | awk '{print $6, $7, $8}')"
 sed 's/^/  /' /etc/resolv.conf >> "$LOG" 2>&1
-out "(127.0.1.1 = QTS's own dnsmasq, which binds upstreams to ${PIHOLE_PARENT_IFACE} and so cannot reach Pi-hole)"
+out "(127.0.1.1 = QTS's own dnsmasq, which binds upstreams to ${PARENT_IFACE} and so cannot reach the DNS container)"
 
 section "4. QTS resolver config"
 out "dnsmasq upstreams: $(cat /etc/resolv.dnsmasq 2>/dev/null | tr '\n' ' ')"
 out "DHCP lease says:   $(grep 'domain-name-servers' /etc/config/dhclient/eth0.leases 2>/dev/null | tail -1 | sed 's/^ *//')"
 
 section "5. parent interface"
-ip -br addr show "$PIHOLE_PARENT_IFACE" >> "$LOG" 2>&1
+ip -br addr show "$PARENT_IFACE" >> "$LOG" 2>&1
 out "default route: $(ip route show default 2>/dev/null | head -1)"
 
 # --- Probes: can block, so skipped in fast mode ------------------------------
@@ -107,13 +107,13 @@ if [ "$FAST" = "--fast" ]; then
   out ""
   out "-- probes skipped (fast pass, DNS still broken at this point) --"
 else
-  wait_for_pihole
-  section "6. can we reach and query Pi-hole?"
-  out "resolve via ${PIHOLE_IP}: $(run nslookup google.com "$PIHOLE_IP" 2>&1 | tail -3 | tr '\n' ' ')"
+  wait_for_dns
+  section "6. can we reach and query ${DNS_CONTAINER}?"
+  out "resolve via ${DNS_IP}: $(run nslookup google.com "$DNS_IP" 2>&1 | tail -3 | tr '\n' ' ')"
   out "resolve via system resolver: $(run nslookup google.com 2>&1 | tail -3 | tr '\n' ' ')"
-  out "blocked domain via ${PIHOLE_IP}: $(run nslookup doubleclick.net "$PIHOLE_IP" 2>&1 | grep -c '0\.0\.0\.0') (1 = Pi-hole is filtering)"
+  out "blocked domain via ${DNS_IP}: $(run nslookup doubleclick.net "$DNS_IP" 2>&1 | grep -c '0\.0\.0\.0') (1 = ${DNS_CONTAINER} is filtering)"
 
-  section "7. docker / pihole container"
+  section "7. docker / ${DNS_CONTAINER} container"
   if run docker ps >/dev/null 2>&1; then
     out "daemon: up"
     dockerd_pid=$(pidof dockerd 2>/dev/null | awk '{print $1}')
@@ -122,9 +122,9 @@ else
     else
       out "dockerd --dns: (could not read dockerd's pid)"
     fi
-    out "pihole: $(run docker inspect -f '{{.State.Status}} health={{.State.Health.Status}}' pihole 2>/dev/null | head -1 || echo 'not found')"
+    out "${DNS_CONTAINER}: $(run docker inspect -f '{{.State.Status}} health={{.State.Health.Status}}' "$DNS_CONTAINER" 2>/dev/null | head -1 || echo 'not found')"
     section "7b. container resolv.conf (set at container start from dockerd --dns)"
-    for c in npm uptime-kuma ntfy immich_server qbittorrent dockge; do
+    for c in traefik uptime-kuma ntfy immich_server qbittorrent dockge; do
       out "  ${c}: $(run docker exec "$c" cat /etc/resolv.conf 2>/dev/null | grep nameserver | tr '\n' ' ')"
     done
   else

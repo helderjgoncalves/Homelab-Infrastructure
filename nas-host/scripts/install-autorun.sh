@@ -33,12 +33,12 @@ fi
 # --- Resolve host-specific paths --------------------------------------------
 # The tracked autorun.sh ships with placeholders instead of absolute paths, so
 # nothing about this NAS's directory layout gets committed. Fill them in here:
-#   __PIHOLE_WATCHDOG__ — derived from SCRIPT_DIR (this install lives next to
+#   __DNS_WATCHDOG__    — derived from SCRIPT_DIR (this install lives next to
 #                        the watchdog by definition).
 #   __SWAP_SCRIPT__     — optional AUTORUN_SWAP_SCRIPT from ../.env; empty
 #                        string means "no extra script", autorun.sh skips it.
-PIHOLE_WATCHDOG="${SCRIPT_DIR}/pihole-watchdog.sh"
-[ -x "$PIHOLE_WATCHDOG" ] || { echo "Error: ${PIHOLE_WATCHDOG} not executable" >&2; exit 1; }
+DNS_WATCHDOG="${SCRIPT_DIR}/dns-watchdog.sh"
+[ -x "$DNS_WATCHDOG" ] || { echo "Error: ${DNS_WATCHDOG} not executable" >&2; exit 1; }
 
 AUTORUN_SWAP_SCRIPT=""
 if [ -f "${SCRIPT_DIR}/../.env" ]; then
@@ -49,7 +49,7 @@ if [ -f "${SCRIPT_DIR}/../.env" ]; then
 fi
 SWAP_SCRIPT_VALUE="${AUTORUN_SWAP_SCRIPT:-}"
 
-sed -e "s|__PIHOLE_WATCHDOG__|${PIHOLE_WATCHDOG}|g" \
+sed -e "s|__DNS_WATCHDOG__|${DNS_WATCHDOG}|g" \
     -e "s|__SWAP_SCRIPT__|${SWAP_SCRIPT_VALUE}|g" \
     "$SOURCE" > "$STAGED"
 sh -n "$STAGED" || { echo "Error: staged autorun.sh has a syntax error" >&2; exit 1; }

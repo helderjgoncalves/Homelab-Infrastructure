@@ -91,11 +91,6 @@ appdata/
 **/config/cache/
 **/config/logs/
 
-# Pi-hole runtime
-**/pihole/etc-pihole/
-**/pihole/etc-dnsmasq.d/
-**/pihole/var-log/
-
 # Reverse proxy runtime artifacts
 **/traefik/acme.json
 **/traefik/letsencrypt/

@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v7
       # Warning level and above: the scripts source a .env that only exists on
       # the Docker host, which shellcheck can only ever report as SC1091 info.
-      - run: shellcheck --severity=warning pihole/scripts/*.sh
+      - run: shellcheck --severity=warning nas-host/scripts/*.sh
 
   gitleaks:
     name: gitleaks

@@ -1,0 +1,7 @@
+# Host-specific addresses and paths. Commit .env.example instead.
+.env
+
+# Generated at runtime by the scripts.
+scripts/*.log
+
+.DS_Store

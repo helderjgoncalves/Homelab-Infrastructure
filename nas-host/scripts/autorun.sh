@@ -18,12 +18,12 @@
 # copy directly (without installing) will not work — that is intentional.
 # -----------------------------------------------------------------------------
 
-PIHOLE_SCRIPT=__PIHOLE_WATCHDOG__
+WATCHDOG_SCRIPT=__DNS_WATCHDOG__
 SWAP_SCRIPT=__SWAP_SCRIPT__
 LOG=/tmp/autorun-boot.log
 MAX_POLLS=150   # 150 x 2s = 5 min for the volumes to come up
 RETRY_WAIT=15   # between failed attempts
-PIHOLE_RETRIES=10  # 10 x 15s = 2.5 min of retries
+WATCHDOG_RETRIES=10  # 10 x 15s = 2.5 min of retries
 
 run_when_ready() {
   target=$1
@@ -62,7 +62,7 @@ run_when_ready() {
 
 (
   echo "[$(date)] autorun.sh started (uptime $(cut -d. -f1 /proc/uptime)s)" > "$LOG"
-  run_when_ready "$PIHOLE_SCRIPT" "pihole" "$PIHOLE_RETRIES"
+  run_when_ready "$WATCHDOG_SCRIPT" "dns-watchdog" "$WATCHDOG_RETRIES"
   [ -e "$SWAP_SCRIPT" ] && run_when_ready "$SWAP_SCRIPT" "ssd-swap"
   echo "[$(date)] autorun.sh done" >> "$LOG"
 ) &
