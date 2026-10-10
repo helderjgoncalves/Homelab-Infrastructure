@@ -18,6 +18,9 @@ stylesheet:
   - assets/custom.css
 
 links:
+  - name: Home
+    icon: fas fa-globe
+    url: https://hgoncalves.uk
   - name: Dockge
     icon: fas fa-boxes-stacked
     url: https://dockge.hgoncalves.uk
