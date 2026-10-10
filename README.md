@@ -20,7 +20,7 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`homeassistant/`](./homeassistant/) | Home automation | `network_mode: host` + `privileged: true` for device/mDNS discovery |
 | [`homer/`](./homer/) | Static start page / service launcher | nginx + YAML (`assets/config.yml`); ~10–20 MB RAM, loopback `:8085` |
 | [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU passthrough (`/dev/dri`); CPU machine-learning image |
-| [`media-automation/`](./media-automation/) | qBittorrent + Prowlarr + Radarr + Sonarr + Maintainerr + Seerr (Watchlist/Seerr requests → downloads → cleanup) | Single `DATA_DIR` mount for hardlinks; WebUIs on loopback; legacy qBittorrent mounts in the gitignored override |
+| [`media-automation/`](./media-automation/) | Media library automation — indexing, requests, fetching and retention | Single `DATA_DIR` mount for hardlinks; WebUIs on loopback; legacy download-client mounts in the gitignored override |
 | [`nas-host/`](./nas-host/) | Host plumbing for the DNS container (not a stack) | macvlan network, shim, `/etc/resolv.conf` and the QTS boot hook; `bootstrap.sh` once per host |
 | [`ntfy/`](./ntfy/) | Push notification server | Alert sink for Kuma + Beszel; iOS via the ntfy.sh upstream relay |
 | [`opencloud/`](./opencloud/) | File sync + collaboration suite | OpenCloud + Collabora + Keycloak + LDAP behind Traefik |
@@ -61,7 +61,7 @@ Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 │   ┌──────────────┐    ┌────────────────┐    ┌──────────────────────────┐   │
 │   │ cloudflared  │───▶│ Reverse Proxy  │───▶│ Self-hosted services     │   │
 │   │ (tunnel)     │    │ (Traefik)      │    │ Immich, OpenCloud,       │   │
-│   └──────────────┘    └────────────────┘    │ ntfy, qBittorrent,       │   │
+│   └──────────────┘    └────────────────┘    │ ntfy, media automation,  │   │
 │                                             │ devbox (SSH)             │   │
 │                                             └──────────────────────────┘   │
 │                                                                            │
@@ -78,9 +78,9 @@ Out of scope: Plex / Plexamp run on the NAS but are not tracked here.
 ### Key design choices
 
 - **No inbound ports.** All external traffic enters via **Cloudflare Tunnel**; the home router exposes nothing.
-- **One name everywhere.** Public hostnames (e.g. `photos.example.com`) resolve to Cloudflare from the internet, and to internal IPs from the LAN via **AdGuard Home DNS rewrites**. Same URLs, same TLS, same auth — anywhere.
+- **One name everywhere.** Public hostnames (e.g. `photos.example.com`) resolve to Cloudflare from the internet, and to internal IPs from the LAN via **AdGuard Home DNS rewrites**. Same URLs and same TLS anywhere; the auth in front of them depends on the path taken (see **Auth at the edge**).
 - **HTTPS everywhere**, including LAN-only paths. No plaintext between hops.
-- **Auth at the edge.** Cloudflare Access enforces SSO/OAuth for humans; service tokens and **mTLS** for machine-to-machine. Origin services additionally validate Cloudflare's signed JWT / client cert.
+- **Auth at the edge.** Cloudflare Access enforces SSO/OAuth for humans; service tokens and **mTLS** for machine-to-machine — every policy is evaluated at the Cloudflare layer, not inside the apps. Origins deliberately do *not* re-validate the Access JWT: with a tunnel there is no inbound handshake to present a client cert on, and no public origin to reach around the edge in the first place. Traffic that skips Access entirely (LAN, Tailscale) is held by Traefik's per-route allowlists and each app's own login.
 - **Loopback-bound UIs.** Service WebUIs publish to `127.0.0.1` so the normal path is via Traefik (+ Cloudflare Access for public names) rather than a LAN bypass. Traefik itself runs `network_mode: host` to reach those loopback origins, and publishes only 80/443 — its dashboard is a LAN-only route, not an open port. Two deliberate exceptions, each for a structural reason:
   - **devbox SSH on `:2222`** — the LAN dev entry point, so it must work without a tunnel. Public-key auth only, root login disabled.
   - **AdGuard Home on its own macvlan IP** — a DNS server has to be reachable by LAN clients, and macvlan gives the container a real LAN address, so its admin UI is reachable there too.
