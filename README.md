@@ -145,7 +145,7 @@ admin surfaces are reachable and how they are contained.
 | State | Lives in | Recovered from |
 | --- | --- | --- |
 | TLS certs, ACME account | Traefik (`traefik/acme/acme.json`) | NAS snapshot; certs re-issue on demand (routes themselves are in Git) |
-| DNS rewrites, allow/deny lists | AdGuard Home (`adguard/conf/AdGuardHome.yaml`) | Rendered from the tracked [`AdGuardHome.yaml.example`](./adguard/conf/AdGuardHome.yaml.example); query log and stats (`adguard/work`) from NAS snapshot |
+| DNS rewrites, allow/deny lists | AdGuard Home (`adguard/conf/AdGuardHome.yaml`) | Resolvers, lists and rewrites tracked in [`AdGuardHome.yaml.example`](./adguard/conf/AdGuardHome.yaml.example); the rest of the config, query log and stats (`adguard/work`) from NAS snapshot |
 | Monitors, notification channels | Uptime Kuma SQLite (`uptime-kuma/`) | NAS snapshot |
 | Dashboards, alert rules | Beszel SQLite (`beszel/data`) | NAS snapshot |
 | Photos, albums, faces | Immich upload dir + Postgres | NAS snapshot for originals, plus a logical `pg_dump` for the database, restored from the same point in time |

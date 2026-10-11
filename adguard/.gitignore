@@ -1,8 +1,7 @@
-# Secrets — .env holds ADGUARD_ADMIN_PASSWORD_HASH. Commit .env.example.
+# Local stack settings. Commit .env.example.
 .env
 
-# Live config: rendered from the template, rewritten in place by AdGuard Home,
-# carries the admin password hash. The template is the tracked source of truth.
+# Live config: written by AdGuard Home, carries the admin password hash.
 conf/AdGuardHome.yaml
 
 # Query log, statistics, downloaded lists, session db. Rebuilt by the container.

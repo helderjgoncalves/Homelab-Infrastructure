@@ -1,16 +1,13 @@
 # AdGuard Home — DNS + ad/tracker blocking, DoH upstreams. See README.md.
 #
-# Prerequisites: the macvlan network in MACVLAN_NETWORK exists (created by
-# nas-host/scripts/bootstrap.sh), and conf/AdGuardHome.yaml has been rendered
-# with scripts/render-config.sh.
+# Prerequisite: the macvlan network in MACVLAN_NETWORK exists (created by
+# nas-host/scripts/bootstrap.sh).
 
 name: adguard
 
 services:
   adguard:
     container_name: adguard
-    # Pinned: conf/AdGuardHome.yaml.example declares schema_version 34, which
-    # is this release's LastSchemaVersion. Bump both together.
     image: adguard/adguardhome:v0.107.79
     networks:
       macvlan_dns:
