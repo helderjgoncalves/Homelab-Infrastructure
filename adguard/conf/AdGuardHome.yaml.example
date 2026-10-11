@@ -98,12 +98,17 @@ filters:
     id: 5
     name: Perflyst SmartTV Blocklist
     url: https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV.txt
-  # Stops clients using their own DoH/VPN/proxy to bypass this resolver -
-  # without it, filtering is optional from the client's point of view.
-  - enabled: true
+  # Both stop clients bypassing this resolver - without one, filtering is
+  # optional from the client's point of view. The broader DoH/VPN/proxy list
+  # is kept but disabled; the encrypted-DNS list covers DoH/DoT endpoints only.
+  - enabled: false
     id: 6
     name: HaGeZi DoH/VPN/Proxy Bypass
     url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/doh-vpn-proxy-bypass.txt
+  - enabled: true
+    id: 1791285366
+    name: HaGeZi’s encrypted-DNS
+    url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/doh.txt
 
 # Pi-hole's deny rules (tracker1.bt.moack.co.kr, regex /tracker\./) were not
 # carried over: the unanchored regex also blocked public BitTorrent trackers
