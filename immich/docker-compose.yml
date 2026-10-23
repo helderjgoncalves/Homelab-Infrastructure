@@ -26,6 +26,9 @@ services:
       - ${SSD_LOCATION}/profile:/data/profile
       - ${SSD_LOCATION}/encoded-video:/data/encoded-video
       - /etc/localtime:/etc/localtime:ro
+      # System settings as code, read only when IMMICH_CONFIG_FILE is set in
+      # .env; see config/README.md.
+      - ./config:/config:ro
       # External photo libraries are mounted via docker-compose.override.yml (gitignored).
     ports:
       - 127.0.0.1:2283:2283
