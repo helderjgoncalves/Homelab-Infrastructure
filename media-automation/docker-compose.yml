@@ -24,11 +24,18 @@ services:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: prowlarr
     restart: unless-stopped
-    environment: &lsio-env
+    # Instance settings that would otherwise live in config.xml, via the
+    # apps' documented <APP>__<SECTION>__<KEY> environment overrides. The
+    # environment takes precedence over config.xml; a change needs a restart.
+    environment:
       - PUID=1000
       - PGID=100
       - UMASK=002
       - TZ=Europe/Lisbon
+      - PROWLARR__AUTH__METHOD=Forms
+      - PROWLARR__AUTH__REQUIRED=Enabled
+      - PROWLARR__LOG__LEVEL=info
+      - PROWLARR__UPDATE__MECHANISM=Docker
     volumes:
       - ./appdata/prowlarr:/config
     ports:
@@ -56,7 +63,15 @@ services:
     image: lscr.io/linuxserver/radarr:latest
     container_name: radarr
     restart: unless-stopped
-    environment: *lsio-env
+    environment:
+      - PUID=1000
+      - PGID=100
+      - UMASK=002
+      - TZ=Europe/Lisbon
+      - RADARR__AUTH__METHOD=Forms
+      - RADARR__AUTH__REQUIRED=Enabled
+      - RADARR__LOG__LEVEL=info
+      - RADARR__UPDATE__MECHANISM=Docker
     volumes:
       - ./appdata/radarr:/config
       - ${DATA_DIR:?set DATA_DIR in .env}:/data
@@ -81,7 +96,15 @@ services:
     image: lscr.io/linuxserver/sonarr:latest
     container_name: sonarr
     restart: unless-stopped
-    environment: *lsio-env
+    environment:
+      - PUID=1000
+      - PGID=100
+      - UMASK=002
+      - TZ=Europe/Lisbon
+      - SONARR__AUTH__METHOD=Forms
+      - SONARR__AUTH__REQUIRED=Enabled
+      - SONARR__LOG__LEVEL=info
+      - SONARR__UPDATE__MECHANISM=Docker
     volumes:
       - ./appdata/sonarr:/config
       - ${DATA_DIR:?set DATA_DIR in .env}:/data
