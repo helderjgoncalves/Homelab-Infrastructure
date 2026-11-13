@@ -7,11 +7,17 @@
 #   document-start   — compose files conventionally omit the leading `---`.
 #   truthy           — a workflow's `on:` key is not a boolean.
 #   comments         — existing files use a single space before trailing `#`.
+#
+# Home Assistant rewrites its automations, scripts and scenes files from the
+# UI in its own style (unindented sequences), so those three are not linted.
 
 extends: default
 
 ignore: |
   opencloud/
+  homeassistant/config/automations.yaml
+  homeassistant/config/scripts.yaml
+  homeassistant/config/scenes.yaml
 
 rules:
   line-length: disable

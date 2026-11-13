@@ -280,6 +280,16 @@ temp/
 # Devbox runtime (container home is bind-mounted)
 **/devbox/home/
 
+# Home Assistant runtime: only the hand-written YAML under config/ is tracked.
+# The rest is state, and some of it is secret: .storage/ holds auth tokens and
+# integration credentials, secrets.yaml the !secret values, next to the
+# recorder DB, backups and HA's own copies of the default blueprints.
+homeassistant/config/*
+!homeassistant/config/configuration.yaml
+!homeassistant/config/automations.yaml
+!homeassistant/config/scripts.yaml
+!homeassistant/config/scenes.yaml
+
 # Uptime Kuma runtime
 **/uptime-kuma/db-config.json
 **/uptime-kuma/kuma.db*

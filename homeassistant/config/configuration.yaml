@@ -1,0 +1,14 @@
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+# No http: block. Since 2026.10 HA's HTTP settings (bind address, trusted
+# proxies) live in the UI under Settings > System > Network, stored in
+# .storage/http; see ../README.md for the required values.

@@ -1,0 +1,87 @@
+- id: '1794151778635'
+  alias: Garantir HomeCinema Ready
+  description: ''
+  triggers:
+  - trigger: remote.turned_on
+    target:
+      device_id: e2105fd6a2dcadcd8a17912106593d10
+    options:
+      behavior: each
+      for: 00:00:00
+  conditions: []
+  actions:
+  - action: switch.turn_on
+    metadata: {}
+    target:
+      entity_id: switch.tripla_quarto_1
+    data: {}
+  mode: single
+- id: '1794153514722'
+  alias: Desligar Tripla quarto
+  description: ''
+  triggers:
+  - trigger: power.crossed_threshold
+    target:
+      entity_id: sensor.tripla_quarto_1_power
+    options:
+      threshold:
+        type: below
+        value:
+          active_choice: number
+          unit_of_measurement: W
+          number: 10
+      behavior: each
+      for:
+        hours: 0
+        minutes: 5
+        seconds: 0
+  conditions:
+  - condition: schedule.is_off
+    target:
+      entity_id: schedule.work_hours
+    options:
+      for: 00:00:00
+  actions:
+  - action: switch.turn_off
+    metadata: {}
+    data: {}
+    target:
+      entity_id: switch.tripla_quarto_1
+  mode: single
+- id: '1794173632071'
+  alias: Alarm
+  description: ''
+  triggers:
+  - trigger: event
+    event_type: wake_alarm
+    context:
+      user_id:
+      - 252249762e694e8da3fce2163a5a6871
+  conditions: []
+  actions:
+  - action: switch.turn_on
+    metadata: {}
+    target:
+      entity_id: switch.tripla_quarto_1
+    data: {}
+  mode: single
+- id: '1794173826223'
+  alias: Prepare to Work
+  description: ''
+  triggers:
+  - trigger: schedule.block_started
+    target:
+      entity_id: schedule.work_hours
+    options:
+      for:
+        hours: 0
+        minutes: 10
+        seconds: 0
+  conditions: []
+  actions:
+  - action: switch.turn_on
+    metadata: {}
+    target:
+      entity_id: switch.tripla_quarto_1
+    data: {}
+  mode: single

@@ -17,7 +17,7 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`cloudflared/`](./cloudflared/) | Cloudflare Tunnel — outbound-only ingress | Token-based; routes managed in CF dashboard |
 | [`devbox/`](./devbox/) | Debian bookworm SSH dev environment | Built from `dockerfile_inline` in the compose file; mounts the repo at `/projects`. SSH on `2222` is a deliberate LAN exception |
 | [`dockge/`](./dockge/) | Compose stack manager (web UI) | Manages every stack in this repo from `STACKS_DIR` |
-| [`homeassistant/`](./homeassistant/) | Home automation | `network_mode: host` + `privileged: true` for device/mDNS discovery |
+| [`homeassistant/`](./homeassistant/) | Home automation | `network_mode: host` for device/mDNS discovery, HTTP bound to `127.0.0.1` behind Traefik (LAN + Tailscale only); Zigbee through [`zigbee2mqtt/`](./zigbee2mqtt/), not ZHA |
 | [`homer/`](./homer/) | Static start page / service launcher | nginx + YAML (`assets/config.yml`); ~10–20 MB RAM, loopback `:8085` |
 | [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU passthrough (`/dev/dri`); CPU machine-learning image |
 | [`media-automation/`](./media-automation/) | Media library automation — indexing, requests, fetching and retention | Single `DATA_DIR` mount for hardlinks; WebUIs on loopback; legacy download-client mounts in the gitignored override |
@@ -148,6 +148,7 @@ admin surfaces are reachable and how they are contained.
 | DNS rewrites, allow/deny lists | AdGuard Home (`adguard/conf/AdGuardHome.yaml`) | Resolvers, lists and rewrites tracked in [`AdGuardHome.yaml.example`](./adguard/conf/AdGuardHome.yaml.example); the rest of the config, query log and stats (`adguard/work`) from NAS snapshot |
 | Monitors, notification channels | Uptime Kuma SQLite (`uptime-kuma/`) | NAS snapshot |
 | Dashboards, alert rules | Beszel SQLite (`beszel/data`) | NAS snapshot |
+| Devices, integrations, users, history | Home Assistant (`homeassistant/config/.storage`, recorder DB) | HA's own backups (`homeassistant/config/backups`) or NAS snapshot; the hand-written YAML is in Git |
 | Photos, albums, faces | Immich upload dir + Postgres | NAS snapshot for originals, plus a logical `pg_dump` for the database, restored from the same point in time |
 | Tunnel routes, Access policies, DNS | Cloudflare dashboard | Cloudflare account (no local copy) |
 | Public probes, status page, heartbeat | Better Stack | Better Stack account (no local copy) |
