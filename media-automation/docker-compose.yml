@@ -129,6 +129,42 @@ services:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
     restart: unless-stopped
+    # Seeding limits: ratio 1, or 1440 minutes seeding, or 1440 minutes
+    # inactive — whichever comes first — then remove the torrent.
+    # The image has no env var for this. qBittorrent reads it from its conf,
+    # which init creates, so the script runs after init and before the client.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /custom-cont-init.d
+        cat > /custom-cont-init.d/10-share-limits.sh << 'END'
+        #!/bin/sh
+        conf=/config/qBittorrent/qBittorrent.conf
+        [ -f "$$conf" ] || exit 0
+        awk '
+        /^\[/ {
+          if (sec == "[BitTorrent]") emit()
+          sec = $$0
+        }
+        /^Session\\GlobalMaxRatio=/ { next }
+        /^Session\\GlobalMaxSeedingMinutes=/ { next }
+        /^Session\\GlobalMaxInactiveSeedingMinutes=/ { next }
+        /^Session\\ShareLimitAction=/ { next }
+        /^Session\\ShareLimitsMode=/ { next }
+        { print }
+        END { if (sec == "[BitTorrent]") emit() }
+        function emit() {
+          print "Session\\GlobalMaxRatio=1"
+          print "Session\\GlobalMaxSeedingMinutes=1440"
+          print "Session\\GlobalMaxInactiveSeedingMinutes=1440"
+          print "Session\\ShareLimitAction=Remove"
+          print "Session\\ShareLimitsMode=MatchAny"
+          sec = ""
+        }
+        ' "$$conf" > "$$conf.new" && mv "$$conf.new" "$$conf"
+        END
+        chmod +x /custom-cont-init.d/10-share-limits.sh
+        exec /init
     environment:
       - PUID=1000
       - PGID=100
