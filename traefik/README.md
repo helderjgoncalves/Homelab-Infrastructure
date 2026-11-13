@@ -8,7 +8,7 @@ Reverse proxy for every stack: TLS termination + one route per hostname, with th
 - **Access layers** (`dynamic/middlewares.yml`):
   - **public** — no middleware: `photos`, `drive`, `collabora`.
   - **`private`** — LAN + the owner's Tailscale devices: every other route.
-  - **`lan-only`** — home LAN only: `router`.
+  - **`lan-only`** — home LAN only: `router`, `router2`, `router3`.
 - **Dashboard:** `https://traefik.hgoncalves.uk` (LAN only).
 
 ## Adding a service

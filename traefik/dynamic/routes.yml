@@ -14,11 +14,31 @@ http:
     collabora:
       rule: Host(`collabora.hgoncalves.uk`)
       service: collabora
+    # Collabora's conversion API and admin console, refused to internet
+    # visitors only. Cloudflare sets Cf-Connecting-Ip on every tunnel request
+    # and clients cannot strip it; OpenCloud reaches Collabora over the LAN
+    # without it.
+    collabora-internet-deny:
+      rule: >-
+        Host(`collabora.hgoncalves.uk`)
+        && HeaderRegexp(`Cf-Connecting-Ip`, `.`)
+        && PathRegexp(`^/(cool|lool)/(convert-to|extract-link-targets|extract-document-structure|transform-document-structure|get-thumbnail|adminws|getMetrics)|^/browser/[^/]+/admin/`)
+      priority: 1000
+      middlewares: [deny]
+      service: collabora
 
     # --- Private (LAN + Tailscale) unless noted ---
     dash:
       rule: Host(`dash.hgoncalves.uk`)
       service: dash
+      middlewares: [private]
+    home:
+      rule: Host(`home.hgoncalves.uk`)
+      service: home
+      middlewares: [private]
+    z2m:
+      rule: Host(`z2m.hgoncalves.uk`)
+      service: z2m
       middlewares: [private]
     nas:
       rule: Host(`nas.hgoncalves.uk`)
@@ -29,6 +49,19 @@ http:
       rule: Host(`router.hgoncalves.uk`)
       service: router
       middlewares: [lan-only, router-cookie]
+    # Home LAN only, same as the ONT. Huawei K562.
+    router2:
+      rule: Host(`router2.hgoncalves.uk`)
+      service: router2
+      middlewares: [lan-only, router-cookie]
+    # Home LAN only. TP-Link RE500X, plain HTTP on port 80.
+    # router3-referer: the extender redirects any other Host or Referer to
+    # tplinkrepeater.net, which is not this device, and refuses its scripts.
+    # router-cookie is off for now so the extender keeps the browser session.
+    router3:
+      rule: Host(`router3.hgoncalves.uk`)
+      service: router3
+      middlewares: [lan-only, router3-referer]
     dns:
       rule: Host(`dns.hgoncalves.uk`)
       service: dns
@@ -87,6 +120,10 @@ http:
       loadBalancer: {servers: [{url: http://127.0.0.1:9980}]}
     dash:
       loadBalancer: {servers: [{url: http://127.0.0.1:8085}]}
+    home:
+      loadBalancer: {servers: [{url: http://127.0.0.1:8123}]}
+    z2m:
+      loadBalancer: {servers: [{url: http://127.0.0.1:8210}]}
     nas:
       loadBalancer:
         servers: [{url: https://127.0.0.1:5766}]
@@ -95,6 +132,14 @@ http:
       loadBalancer:
         servers: [{url: https://192.168.1.1}]
         serversTransport: insecure
+    router2:
+      loadBalancer:
+        servers: [{url: https://192.168.1.204:65443}]
+        serversTransport: insecure
+    router3:
+      loadBalancer:
+        passHostHeader: false
+        servers: [{url: http://192.168.1.65}]
     dns:
       loadBalancer: {servers: [{url: http://192.168.1.2}]}
     dockge:

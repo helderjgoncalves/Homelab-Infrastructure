@@ -22,11 +22,24 @@ http:
         sourceRange:
           - 192.168.1.0/24
 
+    # deny: no client can come from 255.255.255.255, so every request gets 403.
+    deny:
+      ipAllowList:
+        sourceRange:
+          - 255.255.255.255/32
+
     # Cloudflare's cookies are domain-scoped, so the browser sends cf_clearance
     # and CF_Authorization to every *.hgoncalves.uk name. The ONT's small header
-    # buffer can't cope: keep only its own session cookie (named "Cookie").
+    # buffer can't cope: keep only its own session cookie (named "Cookie" on the ONT, "CookieHttps" on the K562, "token" on the RE500X).
     # The plugin applies the regex to each ;-separated cookie, so every other
     # cookie becomes an empty segment — e.g. ";Cookie=abc;".
+    # RE500X serves its UI only when the request looks local. A foreign
+    # Referer makes it redirect to tplinkrepeater.net and reject the scripts.
+    router3-referer:
+      headers:
+        customRequestHeaders:
+          Referer: "http://192.168.1.65/webpages/login.html"
+
     router-cookie:
       plugin:
         htransformation:
@@ -34,7 +47,7 @@ http:
             - Name: keep-only-ont-session
               Header: ^Cookie$
               Type: RewriteValueRule
-              Value: (?i)^(cookie=.*)$|^.*$
+              Value: '(?i)^(cookie(https)?=.*|token=.*)$|^.*$'
               ValueReplace: $1
 
   serversTransports:
