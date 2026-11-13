@@ -1,0 +1,10 @@
+{
+  // opencloud/ is a fork rebased onto upstream: reformatting upstream compose
+  // files costs a conflict on every rebase (see opencloud/AGENTS.md).
+  "[yaml]": {
+    "editor.formatOnSave": false
+  },
+  "[dockercompose]": {
+    "editor.formatOnSave": false
+  }
+}
