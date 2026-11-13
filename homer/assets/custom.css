@@ -187,26 +187,33 @@ body #app #main-section .card:hover {
   box-shadow: var(--shadow-hover);
   border-color: var(--highlight-secondary);
 }
+/* Homer places the icon absolutely and keeps the name clear with
+   --card-text-start. A padding shorthand wipes that offset. */
 body #app #main-section .card-content {
   height: auto;
-  padding: 1rem 1.1rem;
+  min-height: 4.75rem;
+  padding-block: 0.85rem;
+  padding-inline-end: 1.1rem;
+  padding-inline-start: var(--card-text-start);
 }
-body #app #main-section .media {
-  align-items: center;
+body #app #main-section .card-content.has-icon {
+  --card-icon-size: 44px;
+  --card-pad: 0.85rem;
+  --card-text-start: calc(var(--card-pad) + var(--card-icon-size) + 0.85rem);
 }
-body #app #main-section .media-left {
-  margin-inline-end: 0.85rem;
-}
-body #app #main-section .media-left .image {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
+body #app #main-section .card-icon {
+  inset-block-start: 50%;
+  inset-inline-start: var(--card-pad);
+  transform: translateY(-50%);
+  box-sizing: border-box;
   padding: 7px;
   border-radius: 10px;
   background: var(--accent-soft);
 }
-body #app #main-section .media-left .image img {
+body #app #main-section .card-icon img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
   max-height: 100%;
   object-fit: contain;
 }

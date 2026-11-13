@@ -30,6 +30,12 @@ links:
   - name: Router
     icon: fas fa-network-wired
     url: https://router.hgoncalves.uk
+  - name: AP Quarto
+    icon: fas fa-network-wired
+    url: https://router2.hgoncalves.uk
+  - name: AP Anexo
+    icon: fas fa-network-wired
+    url: https://router3.hgoncalves.uk
 
 services:
   - name: Apps
@@ -47,6 +53,14 @@ services:
         logo: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/opencloud.svg
         subtitle: Files & collaboration
         url: https://drive.hgoncalves.uk
+      - name: Home Assistant
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/home-assistant.png
+        subtitle: Home automation
+        url: https://home.hgoncalves.uk
+      - name: Zigbee2MQTT
+        logo: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/zigbee2mqtt.png
+        subtitle: Zigbee
+        url: https://z2m.hgoncalves.uk
 
   - name: Media
     icon: fas fa-film
