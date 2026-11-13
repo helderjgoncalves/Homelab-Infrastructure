@@ -26,6 +26,7 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`opencloud/`](./opencloud/) | File sync + collaboration suite | OpenCloud + Collabora + Keycloak + LDAP behind Traefik |
 | [`traefik/`](./traefik/) | Reverse proxy — TLS + per-host routing | Routes in `dynamic/routes.yml`, one cert per hostname via Cloudflare DNS-01 |
 | [`uptime-kuma/`](./uptime-kuma/) | Uptime monitoring | Liveness probes + outbound deadman heartbeat |
+| [`zigbee2mqtt/`](./zigbee2mqtt/) | Zigbee coordinator + MQTT broker | SONOFF Dongle-M over TCP; Mosquitto on loopback; Home Assistant connects over MQTT |
 
 Each stack folder typically contains:
 

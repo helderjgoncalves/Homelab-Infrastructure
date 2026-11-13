@@ -315,3 +315,6 @@ docs/OPERATIONS.md
 
 # Note: /opencloud/ is a git submodule pointing at
 # https://github.com/helderjgoncalves/opencloud-compose (see .gitmodules).
+
+# Zigbee2MQTT broker password (hashed)
+zigbee2mqtt/mosquitto/config/passwd
