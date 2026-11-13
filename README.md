@@ -25,6 +25,7 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`ntfy/`](./ntfy/) | Push notification server | Alert sink for Kuma + Beszel; iOS via the ntfy.sh upstream relay |
 | [`opencloud/`](./opencloud/) | File sync + collaboration suite | OpenCloud + Collabora + Keycloak + LDAP behind Traefik |
 | [`traefik/`](./traefik/) | Reverse proxy — TLS + per-host routing | Routes in `dynamic/routes.yml`, one cert per hostname via Cloudflare DNS-01 |
+| [`updates/`](./updates/) | Morning container updates + weekly update mail (not a stack) | NAS cron runs `update.sh` in `python:3.13-alpine` with the Docker socket; Compose through Dockge |
 | [`uptime-kuma/`](./uptime-kuma/) | Uptime monitoring | Liveness probes + outbound deadman heartbeat |
 | [`zigbee2mqtt/`](./zigbee2mqtt/) | Zigbee coordinator + MQTT broker | SONOFF Dongle-M over TCP; Mosquitto on loopback; Home Assistant connects over MQTT |
 
@@ -130,7 +131,7 @@ Why external: running our own MTA on a residential IP is a losing game (RBLs, po
 
 - **Secrets never in Git.** `.env` files are ignored; only `*.example` templates are versioned. See `.gitignore` for the full list.
 - **One stack = one folder = one Compose project.** The repo checkout *is* Dockge's stacks dir: point `STACKS_DIR` at it and every folder becomes a managed stack. Dockge mounts that path to the identical path inside its container so the Docker daemon resolves compose paths correctly on the host.
-- **Image tags.** Databases and anything holding state are pinned by digest, because an unattended major bump can migrate data irreversibly. Stateless services track a major (`:1`, `:2`) or `:latest` and are updated deliberately via Dockge, one stack at a time, after checking release notes — never all at once, so a regression is attributable to a single change.
+- **Image tags.** Databases and anything holding state are pinned by digest, because an unattended major bump can migrate data irreversibly. Stateless services track a major (`:1`, `:2`) or `:latest`; [`updates/`](./updates/) pulls them each morning, one container at a time, and rolls an image back if it does not become healthy. Everything pinned is bumped by hand after reading the release notes, and the weekly update mail lists what is newer.
 - **Stack-relative paths.** Because each stack folder *is* the Dockge stack dir, runtime data lives next to the compose file (`./data`, `./appdata`, …). Host-specific paths (shares, external media) are passed in via env vars (`UPLOAD_LOCATION`, `QBT_DOWNLOADS_DIR`, …) so the compose stays portable across hosts.
 - **`opencloud/` is a submodule** pointing at [`helderjgoncalves/opencloud-compose`](https://github.com/helderjgoncalves/opencloud-compose) (a fork of `opencloud-eu/opencloud-compose`). Clone with `--recurse-submodules`, or after cloning run `git submodule update --init`. To bump the pin: update inside `opencloud/`, then `git add opencloud && git commit` at the repo root.
 

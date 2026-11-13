@@ -318,3 +318,6 @@ docs/OPERATIONS.md
 
 # Zigbee2MQTT broker password (hashed)
 zigbee2mqtt/mosquitto/config/passwd
+
+# Nightly update bookkeeping
+updates/state/
