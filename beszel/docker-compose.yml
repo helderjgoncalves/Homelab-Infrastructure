@@ -6,9 +6,9 @@
 #
 # First run:
 #   1. docker compose up -d
-#   2. Reach the hub via its public hostname (NPM + Cloudflare Access), or
-#      tunnel to it with `ssh -L 8090:127.0.0.1:8090 <nas>`, and create the
-#      admin account. The hub is not published on the LAN.
+#   2. Reach the hub at https://beszel.hgoncalves.uk (Traefik, LAN + Tailscale),
+#      or tunnel to it with `ssh -L 8090:127.0.0.1:8090 <nas>`, and create
+#      the admin account.
 #   3. Click "Add System" — copy the generated public key
 #   4. Paste it as KEY below (or into a .env file), then `docker compose up -d`
 #   5. Back in the UI, finish adding the system with host=localhost port=45876
@@ -21,16 +21,20 @@ services:
     container_name: beszel
     restart: unless-stopped
     ports:
-      # Hub UI on loopback only; reached externally via NPM + Cloudflare
-      # Access. Does not affect hub <-> agent traffic, which uses the
-      # agent's host-network listener on 45876.
+      # Hub UI on loopback only; Traefik is the way in. Does not affect
+      # hub <-> agent traffic, which uses the agent's host-network listener
+      # on 45876.
       - 127.0.0.1:8090:8090
     volumes:
       - ./data:/beszel_data
       - ./socket:/beszel_socket
-    # No healthcheck: image is distroless (no /bin/sh, no wget/curl/nc).
-    # Liveness is monitored externally via Uptime Kuma's Docker Container
-    # monitor ("running" state) and an HTTP monitor on the public URL.
+    # The image has no shell, so the exec form. updates/ rolls a new image
+    # back when this does not turn healthy.
+    healthcheck:
+      test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
+      interval: 60s
+      start_period: 20s
+      start_interval: 5s
     logging:
       driver: json-file
       options:
@@ -51,9 +55,12 @@ services:
       TZ: Europe/Lisbon
       # Hub public key — set KEY in .env (copy from .env.example).
       KEY: ${KEY:?set KEY in .env}
-    # No healthcheck: image is distroless (no /bin/sh, no nc).
-    # The hub's UI already shows agent connectivity, which is the
-    # authoritative liveness signal for the agent.
+    # Says only that the agent runs. The hub's UI shows whether it reports.
+    healthcheck:
+      test: ["CMD", "/agent", "health"]
+      interval: 60s
+      start_period: 20s
+      start_interval: 5s
     logging:
       driver: json-file
       options:
