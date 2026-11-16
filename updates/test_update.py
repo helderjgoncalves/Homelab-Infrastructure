@@ -13,17 +13,22 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+import config
 import jobs
+import mail
 import update
-from jobs import HOLD_NOTE, Outcome, apply_update, run, update_beszel, update_immich, update_one
+from config import ConfigError
+from jobs import HOLD_NOTE, Outcome, apply_update, run, update_floating, update_semver
 from mail import Bump, Issue, Notice, failure_letter, pinned_letter
 from releases import Release, choose, newer, parse_version
-from runtime import Container, DockerError, api_prefix, unused_image_prune_path
+from runtime import Container, DockerError, Stack, api_prefix, stack_of, unused_image_prune_path
 from update import Kept, digest_due, merge_bumps
 
 NOW = datetime(2026, 11, 12, tzinfo=timezone.utc)
-STACK = Path("/stacks/x/docker-compose.yml")
 SUNDAY = date(2026, 11, 15)
+CONFIG = config.load()
+APPS = CONFIG.apps
+mail.use_titles(CONFIG.titles)
 
 
 def release(tag: str, days_ago: int, prerelease: bool = False, now: datetime = NOW) -> Release:
@@ -38,6 +43,9 @@ class Box:
     image_id: str
     project: str
     service: str
+    # Compose files on the container's labels; one docker-compose.yml when empty.
+    files: tuple[str, ...] = ()
+    labeled: bool = True
 
 
 class FakeDocker:
@@ -52,10 +60,12 @@ class FakeDocker:
         self.fail_up = 0
         self.frozen = False
         self.calls: list[tuple] = []
+        self.stacks: list[Stack] = []
         self.pruned = 0
         self.prune_error: str | None = None
         self.files: dict[tuple[str, str], bytes] = {}
         self.outputs: dict[tuple[str, str], str] = {}
+        self.compose_container = ""
 
     def exec(self, name: str, cmd: list[str]) -> tuple[int, str]:
         output = self.outputs.get((name, self.boxes[name].image_id))
@@ -75,7 +85,10 @@ class FakeDocker:
             raise DockerError(f"no such container {name}")
         box = self.boxes[name]
         version = self.versions.get(box.image_id, box.image.rsplit(":", 1)[-1])
-        return Container(name, box.image, box.image_id, version, "running", "healthy")
+        if not box.labeled:
+            return Container(name, box.image, box.image_id, version, "running", "healthy")
+        stack = Stack(box.project, box.files or (f"/stacks/{box.project}/docker-compose.yml",), f"/stacks/{box.project}")
+        return Container(name, box.image, box.image_id, version, "running", "healthy", 0, box.service, stack)
 
     def image_id(self, ref: str) -> str:
         if ref not in self.images:
@@ -92,10 +105,11 @@ class FakeDocker:
         self.calls.append(("tag", source, target))
         self.images[target] = self.images.get(source, source)
 
-    def compose(self, project: str, file: Path, *args: str) -> None:
-        self.calls.append(("compose", project, *args))
+    def compose(self, stack: Stack, *args: str) -> None:
+        self.calls.append(("compose", stack.project, *args))
+        self.stacks.append(stack)
         services = [arg for arg in args[1:] if not arg.startswith("-") and arg != "never"]
-        boxes = [box for box in self.boxes.values() if box.project == project and box.service in services]
+        boxes = [box for box in self.boxes.values() if box.project == stack.project and box.service in services]
         if args[0] == "pull":
             for box in boxes:
                 if box.image in self.remote:
@@ -108,8 +122,10 @@ class FakeDocker:
                 for box in boxes:
                     box.image_id = self.images[box.image]
 
-    def recreate_dockge(self, image: str, file: Path) -> None:
-        self.compose("dockge", file, "up", "-d", "dockge")
+    def recreate_runner(self, image: str, stack: Stack) -> None:
+        self.calls.append(("recreate", stack.project))
+        services = [box.service for box in self.boxes.values() if box.project == stack.project]
+        self.compose(stack, "up", "-d", *services)
 
     def wait_ready(self, name: str) -> bool:
         return self.boxes[name].image_id not in self.unhealthy
@@ -125,8 +141,12 @@ def traefik(remote: str = "new", image: str = "traefik:v3") -> FakeDocker:
     return FakeDocker({"traefik": Box(image, "old", "traefik", "traefik")}, {image: remote})
 
 
+def bump(docker: FakeDocker, key: str, outcome: Outcome, rejected=frozenset(), running=None) -> None:
+    update_floating(docker, CONFIG, set(docker.boxes) if running is None else running, False, outcome, rejected, APPS[key])
+
+
 def bump_traefik(docker: FakeDocker, outcome: Outcome, rejected=frozenset()) -> None:
-    update_one(docker, set(docker.boxes), False, outcome, rejected, "traefik", STACK, "traefik", "traefik", "traefik:v3")
+    bump(docker, "traefik", outcome, rejected)
 
 
 class ChooseTests(unittest.TestCase):
@@ -227,10 +247,7 @@ class RollbackTests(unittest.TestCase):
                 (name, "new"): ('{"name": "%s", "version": "%s"}' % (name, after)).encode(),
             }
             outcome = Outcome()
-            if name == "dockge":
-                jobs.update_dockge(docker, {name}, False, outcome, set())
-            else:
-                update_one(docker, {name}, False, outcome, set(), name, STACK, name, name)
+            bump(docker, name, outcome)
             self.assertEqual(outcome.bumps, [Bump(name, before, after, url)])
             self.assertIn(f"{before} → {after}", pinned_letter([], outcome.bumps).text)
 
@@ -242,14 +259,14 @@ class RollbackTests(unittest.TestCase):
             ("cloudflare-tunnel", "new"): "cloudflared version 2026.11.0 (built 2026-11-12-09:02 UTC)\n",
         }
         outcome = Outcome()
-        update_one(docker, {"cloudflare-tunnel"}, False, outcome, set(), "cloudflared", STACK, "cloudflare-tunnel", "cloudflare-tunnel")
+        bump(docker, "cloudflare-tunnel", outcome)
         self.assertEqual(outcome.bumps, [Bump("cloudflare-tunnel", "2026.10.7", "2026.11.0", "https://github.com/cloudflare/cloudflared/releases/tag/2026.11.0")])
 
     def test_an_unreadable_package_falls_back_to_the_tag(self):
         docker = FakeDocker({"uptime-kuma": Box("louislam/uptime-kuma:2", "old", "uptime-kuma", "uptime-kuma")}, {"louislam/uptime-kuma:2": "new"})
         docker.files = {("uptime-kuma", "new"): b"not json"}
         outcome = Outcome()
-        update_one(docker, {"uptime-kuma"}, False, outcome, set(), "uptime-kuma", STACK, "uptime-kuma", "uptime-kuma")
+        bump(docker, "uptime-kuma", outcome)
         self.assertEqual((outcome.bumps[0].before, outcome.bumps[0].after), ("2", "2"))
 
     def test_read_file_unpacks_the_archive(self):
@@ -290,7 +307,7 @@ class RollbackTests(unittest.TestCase):
     def test_beszel_needs_hub_and_agent(self):
         docker = FakeDocker({"beszel": Box("henrygd/beszel:0", "old", "beszel", "beszel")}, {"henrygd/beszel:0": "new"})
         outcome = Outcome()
-        update_beszel(docker, {"beszel"}, False, outcome, set())
+        bump(docker, "beszel", outcome, running={"beszel"})
         self.assertEqual(docker.calls, [])
         self.assertEqual(outcome.issues, [])
 
@@ -315,7 +332,7 @@ class ImmichTests(unittest.TestCase):
 
     def update(self, rejected=frozenset(), running=None) -> Outcome:
         outcome = Outcome()
-        update_immich(self.docker, running or set(self.docker.boxes), False, outcome, rejected)
+        update_semver(self.docker, CONFIG, running or set(self.docker.boxes), False, outcome, rejected, APPS["immich"])
         return outcome
 
     def test_patch_pulls_the_exact_tag_and_retags_v3(self):
@@ -348,7 +365,8 @@ class ImmichTests(unittest.TestCase):
     def test_compose_that_ignores_the_pulled_images_is_reported(self):
         self.docker.frozen = True
         outcome = self.update()
-        self.assertIn("IMMICH_VERSION", outcome.issues[0].detail)
+        self.assertIn("Compose did not start the v3.4.2 images", outcome.issues[0].detail)
+        self.assertIn("(v3)", outcome.issues[0].detail)
         self.assertEqual(outcome.bumps, [])
 
     def test_failed_pull_changes_nothing(self):
@@ -356,7 +374,8 @@ class ImmichTests(unittest.TestCase):
         outcome = self.update()
         self.assertEqual(self.docker.images[f"{self.SERVER}:v3"], "srv-old")
         self.assertFalse([call for call in self.docker.calls if call[0] == "compose"])
-        self.assertIn("Neither container was changed", outcome.issues[0].detail)
+        self.assertFalse([call for call in self.docker.calls if call[0] == "tag" and call[2].endswith(":v3") and call[1].endswith(":v3.4.2")])
+        self.assertIn("No container was changed", outcome.issues[0].detail)
 
     def test_server_alone_is_left_alone(self):
         self.update(running={"immich_server"})
@@ -382,7 +401,7 @@ class RunTests(unittest.TestCase):
             return original(name)
 
         docker.inspect = inspect
-        outcome = run(docker, False)
+        outcome = run(docker, CONFIG, False)
         self.assertEqual([bump.key for bump in outcome.bumps], ["traefik"])
         self.assertEqual([issue.name for issue in outcome.issues], ["uptime-kuma"])
         self.assertIn("bad payload", outcome.issues[0].detail)
@@ -394,7 +413,7 @@ class RunTests(unittest.TestCase):
             raise DockerError("connection refused")
 
         docker.names = names
-        outcome = run(docker, False)
+        outcome = run(docker, CONFIG, False)
         self.assertEqual(outcome.issues[0].name, "docker")
 
     def test_a_failed_release_check_is_recorded_for_the_main_container(self):
@@ -404,7 +423,7 @@ class RunTests(unittest.TestCase):
         })
         with mock.patch.object(jobs, "github_releases", side_effect=OSError("rate limited")), \
                 mock.patch.object(jobs, "hub_tags", side_effect=OSError("hub down")):
-            outcome = run(docker, False)
+            outcome = run(docker, CONFIG, False)
         self.assertEqual(outcome.unchecked, [("adguard", "rate limited")])
         self.assertEqual(outcome.issues, [])
 
@@ -663,7 +682,7 @@ class MainTests(StateTests):
         self.assertFalse(update.PRUNE_ERROR.is_file())
 
     def test_a_stopped_run_keeps_what_already_moved(self):
-        def stopped(_docker, _dry, _rejected, outcome):
+        def stopped(_docker, _config, _dry, _rejected, outcome):
             outcome.bumps.append(Bump("traefik", "v3.7.18", "v3.7.19"))
             outcome.rejected.append(("uptime-kuma", "sha256:bad"))
             raise SystemExit(143)
@@ -680,7 +699,7 @@ class MainTests(StateTests):
         update.main([])
         self.outcome = Outcome()
         update.main([])
-        self.assertEqual(self.run.call_args.args[2], {("traefik", "sha256:new")})
+        self.assertEqual(self.run.call_args.args[3], {("traefik", "sha256:new")})
 
     def test_a_failed_prune_is_mailed_the_next_morning(self):
         self.docker.prune_error = "daemon busy"
@@ -768,6 +787,304 @@ class MailTests(unittest.TestCase):
         path = unused_image_prune_path()
         self.assertIn("/images/prune?", path)
         self.assertIn('"dangling":["false"]', urllib.parse.unquote(path))
+
+
+class SameAsBeforeConfigTests(unittest.TestCase):
+    """config.toml makes the same decisions as the tables it replaced, copied here as they were."""
+
+    FLOATING = {"cloudflare-tunnel": None, "traefik": "traefik:v3", "uptime-kuma": None}
+    GITHUB = {
+        "adguard": "AdguardTeam/AdGuardHome", "homeassistant": "home-assistant/core",
+        "zigbee2mqtt": "Koenkk/zigbee2mqtt", "opencloud-opencloud-1": "opencloud-eu/opencloud",
+    }
+    HUB = {"mosquitto": "library/eclipse-mosquitto"}
+    IMMEDIATE = {"traefik", "cloudflare-tunnel", "beszel", "beszel-agent", "uptime-kuma", "dockge"}
+    IMMICH = ("immich_server", "immich_machine_learning")
+    APP_VERSION = {"uptime-kuma": "/app/package.json", "dockge": "/app/package.json"}
+    VERSION_COMMAND = {"cloudflare-tunnel": ("cloudflared", "--version")}
+    TITLES = {
+        "adguard": "AdGuard Home", "homeassistant": "Home Assistant", "zigbee2mqtt": "Zigbee2MQTT",
+        "mosquitto": "Mosquitto", "opencloud-opencloud-1": "OpenCloud", "traefik": "Traefik",
+        "cloudflare-tunnel": "Cloudflared", "beszel": "Beszel", "uptime-kuma": "Uptime Kuma",
+        "dockge": "Dockge", "immich": "Immich", "plex": "Plex",
+    }
+    RELEASES = {
+        "traefik": ("https://github.com/traefik/traefik/releases", True),
+        "cloudflare-tunnel": ("https://github.com/cloudflare/cloudflared/releases", False),
+        "beszel": ("https://github.com/henrygd/beszel/releases", True),
+        "uptime-kuma": ("https://github.com/louislam/uptime-kuma/releases", False),
+        "dockge": ("https://github.com/louislam/dockge/releases", False),
+        "immich": ("https://github.com/immich-app/immich/releases", True),
+    }
+
+    @classmethod
+    def old_release_url(cls, key: str, version: str) -> str:
+        base, prefixed = cls.RELEASES[key]
+        text = version.strip()
+        if not text or text in {"latest", "v3", "0", "1", "2"}:
+            return base
+        tag = text if text.startswith("v") or not prefixed else f"v{text}"
+        if not prefixed:
+            tag = text[1:] if text.startswith("v") else text
+        return f"{base}/tag/{tag}"
+
+    def by_policy(self, policy: str) -> dict:
+        return {key: app for key, app in APPS.items() if app.policy == policy}
+
+    def test_the_same_containers_update_in_the_morning(self):
+        floating = self.by_policy("floating")
+        self.assertEqual({name for app in floating.values() for name in app.containers}, self.IMMEDIATE)
+        self.assertEqual({key: app.image or None for key, app in floating.items() if key in self.FLOATING}, self.FLOATING)
+        self.assertEqual(APPS["beszel"].containers, ("beszel", "beszel-agent"))
+        self.assertEqual(CONFIG.compose_container, "dockge")
+
+    def test_immich_is_the_only_semver_app(self):
+        self.assertEqual(list(self.by_policy("semver")), ["immich"])
+        self.assertEqual(APPS["immich"].containers, self.IMMICH)
+        self.assertEqual(APPS["immich"].releases, "github:immich-app/immich")
+
+    def test_the_same_pinned_apps_are_checked(self):
+        reported = {app.main: app.releases for app in self.by_policy("report").values() if app.releases != "plex"}
+        expected = {name: f"github:{repo}" for name, repo in self.GITHUB.items()}
+        expected.update({name: f"hub:{repo}" for name, repo in self.HUB.items()})
+        self.assertEqual(reported, expected)
+        self.assertEqual(APPS["plex"].releases, "plex")
+        self.assertEqual({key for key, app in APPS.items() if app.policy == "report"}, set(expected) | {"plex"})
+
+    def test_titles_and_version_sources_are_unchanged(self):
+        self.assertEqual(CONFIG.titles, self.TITLES)
+        self.assertEqual({key: app.version_file for key, app in APPS.items() if app.version_file}, self.APP_VERSION)
+        self.assertEqual({key: app.version_command for key, app in APPS.items() if app.version_command}, self.VERSION_COMMAND)
+
+    def test_release_links_are_unchanged(self):
+        versions = ("", "latest", "v3", "0", "1", "2", "2.5.11", "v2.5.11", "3.7.19", "v3.7.19", "2026.11.0", "1.5.0")
+        for key in self.RELEASES:
+            for version in versions:
+                with self.subTest(key=key, version=version):
+                    self.assertEqual(jobs.release_url(APPS[key], version), self.old_release_url(key, version))
+        self.assertEqual(jobs._release_page(APPS["mosquitto"], "2.0.22"), "https://hub.docker.com/_/eclipse-mosquitto/tags")
+        self.assertEqual(jobs._release_page(APPS["adguard"], "v0.107.80"), "https://github.com/AdguardTeam/AdGuardHome/releases/tag/v0.107.80")
+
+    def test_steps_run_in_the_same_order_and_dockge_last(self):
+        order = []
+        with mock.patch.object(jobs, "update_floating", lambda *args: order.append(args[-1].key)), \
+                mock.patch.object(jobs, "update_semver", lambda *args: order.append(args[-1].key)), \
+                mock.patch.object(jobs, "collect_pinned", lambda *args: order.append("pinned")):
+            run(FakeDocker({}), CONFIG, False)
+        self.assertEqual(order, ["immich", "cloudflare-tunnel", "traefik", "uptime-kuma", "beszel", "pinned", "dockge"])
+
+
+class ConfigTests(unittest.TestCase):
+    BASE = """
+compose_container = "dockge"
+
+[apps.traefik]
+title = "Traefik"
+policy = "floating"
+containers = ["traefik"]
+
+[apps.dockge]
+title = "Dockge"
+policy = "floating"
+containers = ["dockge"]
+"""
+
+    def load(self, text: str):
+        path = Path(tempfile.mkdtemp()) / "config.toml"
+        self.addCleanup(shutil.rmtree, path.parent)
+        path.write_text(text)
+        return config.load(path)
+
+    def rejects(self, text: str, message: str) -> None:
+        with self.assertRaises(ConfigError) as caught:
+            self.load(text)
+        self.assertIn(message, str(caught.exception))
+
+    def test_the_shipped_config_loads(self):
+        self.assertIn("traefik", APPS)
+
+    def test_a_minimal_config_loads(self):
+        loaded = self.load(self.BASE)
+        self.assertEqual(list(loaded.apps), ["traefik", "dockge"])
+        self.assertEqual(loaded.apps["traefik"].main, "traefik")
+
+    def test_mistakes_stop_the_run(self):
+        app = '\n[apps.x]\ntitle = "X"\n'
+        cases = [
+            ("compose_container = ", "config.toml:"),
+            ("colour = 1\n" + self.BASE, "unknown setting colour"),
+            (self.BASE.replace('compose_container = "dockge"', ""), "compose_container"),
+            ('compose_container = "dockge"\n', "no [apps.<key>] tables"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\npolicey = 1\n', "apps.x: unknown field policey"),
+            (self.BASE + app + 'policy = "auto"\ncontainers = ["x"]\n', "apps.x.policy must be one of"),
+            (self.BASE + '\n[apps.x]\npolicy = "floating"\ncontainers = ["x"]\n', "apps.x.title"),
+            (self.BASE + app + 'policy = "report"\ncontainers = ["x"]\n', "a report app needs releases"),
+            (self.BASE + app + 'policy = "report"\ncontainers = ["x"]\nreleases = "gitlab:a/b"\n', "apps.x.releases must be"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = []\n', "apps.x.containers is empty"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["traefik"]\n', "container traefik is in apps.traefik and apps.x"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x", "y"]\nimage = "x:1"\n', "apps.x.image"),
+            (self.BASE + app + 'policy = "report"\ncontainers = ["x"]\nreleases = "plex"\n', "plex is the QNAP package"),
+            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "hub:x/y"\n', "follows GitHub releases"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nversion_file = "app/package.json"\n', "absolute path"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nversion_file = "/a"\nversion_command = ["a"]\n', "not both"),
+            (self.BASE + app + 'policy = "report"\ncontainers = ["x"]\nreleases = "github:a/b"\nversion_file = "/a"\n', "for floating apps"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x", "x"]\n', "names a container twice"),
+            (self.BASE + '\n[apps.updater]\ntitle = "U"\npolicy = "floating"\ncontainers = ["u"]\n', "apps.updater: the key"),
+            (self.BASE.replace('containers = ["dockge"]', 'containers = ["dockge", "sidecar"]'), "dockge runs Compose"),
+            (self.BASE.replace('title = "Dockge"\npolicy = "floating"', 'title = "Dockge"\npolicy = "report"\nreleases = "github:a/b"'), "dockge runs Compose"),
+            (self.BASE + app + 'policy = "report"\ncontainers = ["x"]\nreleases = "hub:nginx"\n', "hub:library/<name>"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nimage = "traefik"\n', "with no digest"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nimage = "traefik:v3@sha256:00"\n', "with no digest"),
+            (self.BASE + app + 'policy = "report"\nreleases = "plex"\n' + '\n[apps.y]\ntitle = "Y"\npolicy = "report"\nreleases = "plex"\n', "apps.x and apps.y both follow plex"),
+        ]
+        for text, message in cases:
+            with self.subTest(message=message):
+                self.rejects(text, message)
+
+    def test_a_broken_config_is_mailed_and_fails_the_run(self):
+        main = MainTests("test_only_the_weekly_run_prunes")
+        main.setUp()
+        self.addCleanup(main.doCleanups)
+        broken = mock.patch.object(update, "load_config", side_effect=ConfigError("config.toml: apps.x.policy must be one of floating, semver, report"))
+        with broken:
+            self.assertEqual(update.main(["--dry-run"]), 1)
+            self.assertEqual(update.main(["--check"]), 1)
+            self.assertEqual(main.letters, [])
+            self.assertEqual(update.main([]), 1)
+            main.run.assert_not_called()
+            self.assertEqual(main.subjects(), ["Container update failed"])
+            self.assertIn("Nothing was updated", update.FAILURES.read_text())
+            self.assertFalse(update.LOCK.exists())
+            with mock.patch.dict(os.environ, {"UPDATE_TODAY": "2026-11-16", "UPDATE_WDAY": "1"}):
+                self.assertEqual(update.main([]), 1)
+            self.assertEqual(main.subjects(), [])
+
+    def test_a_broken_config_under_a_held_lock_moves_the_weekly_mail(self):
+        main = MainTests("test_only_the_weekly_run_prunes")
+        main.setUp()
+        self.addCleanup(main.doCleanups)
+        update.LOCK.mkdir(parents=True)
+        with mock.patch.object(update, "load_config", side_effect=ConfigError("config.toml: bad")):
+            self.assertEqual(update.main([]), 1)
+            self.assertFalse(update.DUE.is_file())
+            self.assertEqual(update.main(["--digest"]), 1)
+        self.assertEqual(main.letters, [])
+        self.assertTrue(update.DUE.is_file())
+        self.assertTrue(update.LOCK.exists())
+
+    def test_image_is_compared_without_the_registry(self):
+        loaded = self.load(self.BASE.replace('containers = ["traefik"]', 'containers = ["traefik"]\nimage = "docker.io/library/traefik:v3"'))
+        self.assertEqual(loaded.apps["traefik"].image, "traefik:v3")
+
+
+class ComposeLabelTests(unittest.TestCase):
+    LABELS = {
+        "com.docker.compose.project": "immich",
+        "com.docker.compose.service": "immich-server",
+        "com.docker.compose.project.config_files": "/s/immich/docker-compose.yml,/s/immich/docker-compose.override.yml",
+        "com.docker.compose.project.working_dir": "/s/immich",
+    }
+
+    def test_labels_name_the_project_and_every_file(self):
+        self.assertEqual(stack_of(self.LABELS), Stack("immich", ("/s/immich/docker-compose.yml", "/s/immich/docker-compose.override.yml"), "/s/immich"))
+        self.assertIsNone(stack_of({"com.docker.compose.project": "immich"}))
+        self.assertIsNone(stack_of({}))
+
+    def test_inspect_reads_the_labels(self):
+        from runtime import Docker
+
+        payload = {
+            "Config": {"Image": "ghcr.io/immich-app/immich-server:v3", "Labels": self.LABELS},
+            "Image": "sha256:srv", "State": {"Status": "running"}, "RestartCount": 0,
+        }
+        docker = Docker()
+        with mock.patch.object(docker, "_request", return_value=payload):
+            info = docker.inspect("immich_server")
+        self.assertEqual(info.service, "immich-server")
+        self.assertEqual(info.stack, stack_of(self.LABELS))
+
+    def test_compose_passes_every_file(self):
+        from runtime import Docker
+
+        docker = Docker(compose_container="dockge")
+        with mock.patch.object(docker, "_exec", return_value=(0, "")) as exec_:
+            docker.compose(stack_of(self.LABELS), "up", "-d", "immich-server")
+        container, cmd = exec_.call_args.args
+        self.assertEqual(container, "dockge")
+        self.assertEqual(cmd, [
+            "/usr/bin/docker", "compose", "--project-directory", "/s/immich", "-p", "immich",
+            "-f", "/s/immich/docker-compose.yml", "-f", "/s/immich/docker-compose.override.yml",
+            "up", "-d", "immich-server",
+        ])
+        with self.assertRaises(DockerError):
+            Docker().compose(stack_of(self.LABELS), "up")
+
+    def test_the_compose_container_is_recreated_with_every_file(self):
+        from runtime import Docker
+
+        docker = Docker()
+        stack = Stack("dockge", ("/s/dockge/compose.yaml",), "/s/dockge")
+        replies = iter([{}, {"Id": "one-shot"}, {}, {"StatusCode": 0}, {}])
+        with mock.patch.object(docker, "_request", side_effect=lambda *_args: next(replies)) as request, \
+                mock.patch.object(docker, "_read", return_value=b""):
+            docker.recreate_runner("louislam/dockge:1", stack)
+        create = request.call_args_list[1].args
+        self.assertEqual(create[1], "/containers/create?name=updates-dockge-recreate")
+        self.assertEqual(create[2]["Cmd"], [
+            "compose", "--project-directory", "/s/dockge", "-p", "dockge", "-f", "/s/dockge/compose.yaml", "up", "-d", "--pull", "never",
+        ])
+
+    def test_immich_is_recreated_with_its_override(self):
+        files = ("/stacks/immich/docker-compose.yml", "/stacks/immich/docker-compose.override.yml")
+        test = ImmichTests("test_patch_pulls_the_exact_tag_and_retags_v3")
+        test.setUp()
+        self.addCleanup(test.doCleanups)
+        for box in test.docker.boxes.values():
+            box.files = files
+        test.update()
+        self.assertTrue(test.docker.stacks)
+        self.assertEqual({stack.files for stack in test.docker.stacks}, {files})
+
+    def test_a_container_compose_did_not_start_is_left_alone(self):
+        docker = FakeDocker({"traefik": Box("traefik:v3", "old", "traefik", "traefik", labeled=False)}, {"traefik:v3": "new"})
+        outcome = Outcome()
+        bump_traefik(docker, outcome)
+        self.assertEqual(docker.calls, [])
+        self.assertIn("was not started by Compose", outcome.issues[0].detail)
+
+    def test_a_group_split_over_projects_is_left_alone(self):
+        docker = FakeDocker({
+            "beszel": Box("henrygd/beszel:0", "hub", "beszel", "beszel"),
+            "beszel-agent": Box("henrygd/beszel-agent:0", "agent", "agents", "beszel-agent"),
+        }, {"henrygd/beszel:0": "hub-new"})
+        outcome = Outcome()
+        bump(docker, "beszel", outcome)
+        self.assertEqual(docker.calls, [])
+        self.assertIn("different Compose projects", outcome.issues[0].detail)
+
+    def test_beszel_moves_together_and_rolls_back_together(self):
+        docker = FakeDocker({
+            "beszel": Box("henrygd/beszel:0", "hub", "beszel", "beszel"),
+            "beszel-agent": Box("henrygd/beszel-agent:0", "agent", "beszel", "beszel-agent"),
+        }, {"henrygd/beszel:0": "hub-new", "henrygd/beszel-agent:0": "agent-new"})
+        docker.unhealthy = {"agent-new"}
+        outcome = Outcome()
+        bump(docker, "beszel", outcome)
+        self.assertIn(("compose", "beszel", "up", "-d", "--pull", "never", "--no-deps", "beszel", "beszel-agent"), docker.calls)
+        self.assertEqual((docker.boxes["beszel"].image_id, docker.boxes["beszel-agent"].image_id), ("hub", "agent"))
+        self.assertEqual(outcome.rejected, [("beszel", "hub-new"), ("beszel-agent", "agent-new")])
+        self.assertIn("The new images did not become healthy", outcome.issues[0].detail)
+
+    def test_the_compose_container_goes_last_through_a_one_shot(self):
+        docker = FakeDocker({
+            "dockge": Box("louislam/dockge:1", "dockge-old", "dockge", "dockge"),
+            "traefik": Box("traefik:v3", "old", "traefik", "traefik"),
+        }, {"louislam/dockge:1": "dockge-new", "traefik:v3": "new"})
+        with mock.patch.dict(os.environ, {"PLEX_VERSION": ""}):
+            outcome = run(docker, CONFIG, False)
+        self.assertEqual([bump.key for bump in outcome.bumps], ["traefik", "dockge"])
+        ups = [call for call in docker.calls if call[0] in ("recreate",) or call[:3] == ("compose", "traefik", "up")]
+        self.assertEqual(ups, [("compose", "traefik", "up", "-d", "--pull", "never", "--no-deps", "traefik"), ("recreate", "dockge")])
 
 
 if __name__ == "__main__":

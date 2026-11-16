@@ -22,28 +22,16 @@ DARK = """
 .m-bad { color: #ffb4a2 !important; }
 """
 
+# The updater's own rows. The apps' titles come from config.toml through use_titles.
 TITLES = {
-    "adguard": "AdGuard Home",
-    "homeassistant": "Home Assistant",
-    "zigbee2mqtt": "Zigbee2MQTT",
-    "mosquitto": "Mosquitto",
-    "opencloud-opencloud-1": "OpenCloud",
-    "opencloud-collabora-1": "Collabora",
-    "opencloud-yjs-1": "Yjs",
-    "immich_postgres": "Immich Postgres",
-    "immich_redis": "Immich Valkey",
-    "traefik": "Traefik",
-    "cloudflare-tunnel": "Cloudflared",
-    "beszel": "Beszel",
-    "uptime-kuma": "Uptime Kuma",
-    "dockge": "Dockge",
-    "immich": "Immich",
-    "opencloud": "OpenCloud",
-    "plex": "Plex",
     "images": "Images",
     "docker": "Docker",
     "updater": "Updater",
 }
+
+
+def use_titles(titles: dict[str, str]) -> None:
+    TITLES.update(titles)
 
 
 @dataclass(frozen=True)
@@ -66,30 +54,6 @@ class Issue:
     @property
     def title(self) -> str:
         return TITLES.get(self.name, self.name)
-
-
-RELEASES = {
-    "traefik": ("https://github.com/traefik/traefik/releases", True),
-    "cloudflare-tunnel": ("https://github.com/cloudflare/cloudflared/releases", False),
-    "beszel": ("https://github.com/henrygd/beszel/releases", True),
-    "uptime-kuma": ("https://github.com/louislam/uptime-kuma/releases", False),
-    "dockge": ("https://github.com/louislam/dockge/releases", False),
-    "immich": ("https://github.com/immich-app/immich/releases", True),
-}
-
-
-def release_url(key: str, version: str) -> str:
-    found = RELEASES.get(key)
-    if found is None:
-        return ""
-    base, prefixed = found
-    text = version.strip()
-    if not text or text in {"latest", "v3", "0", "1", "2"}:
-        return base
-    tag = text if text.startswith("v") or not prefixed else f"v{text}"
-    if not prefixed:
-        tag = text[1:] if text.startswith("v") else text
-    return f"{base}/tag/{tag}"
 
 
 @dataclass(frozen=True)

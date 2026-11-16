@@ -1,4 +1,4 @@
-"""Docker Engine over the socket, and compose through the Dockge container."""
+"""Docker Engine over the socket, and Compose through the container config.toml names."""
 
 from __future__ import annotations
 
@@ -24,6 +24,15 @@ class DockerError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class Stack:
+    """A Compose project, as Compose labels the containers it starts."""
+
+    project: str
+    files: tuple[str, ...]
+    directory: str
+
+
+@dataclass(frozen=True)
 class Container:
     name: str
     image: str
@@ -32,6 +41,9 @@ class Container:
     status: str
     health: str
     restarts: int = 0
+    service: str = ""
+    # None when Compose did not start the container.
+    stack: Stack | None = None
 
 
 def log(message: str) -> None:
@@ -62,8 +74,9 @@ def _api_number(text: str) -> tuple[int, ...]:
 
 
 class Docker:
-    def __init__(self, socket_path: str = SOCKET):
+    def __init__(self, socket_path: str = SOCKET, compose_container: str = ""):
         self.socket_path = socket_path
+        self.compose_container = compose_container
         self._prefix: str | None = None
 
     def names(self) -> set[str]:
@@ -78,7 +91,10 @@ class Docker:
         if not version:
             version = image.rsplit(":", 1)[-1].split("@", 1)[0]
         health = (payload.get("State", {}).get("Health") or {}).get("Status") or "none"
-        return Container(name, image, payload["Image"], version, payload["State"]["Status"], health, int(payload.get("RestartCount") or 0))
+        return Container(
+            name, image, payload["Image"], version, payload["State"]["Status"], health, int(payload.get("RestartCount") or 0),
+            labels.get("com.docker.compose.service") or "", stack_of(labels),
+        )
 
     def read_file(self, name: str, path: str) -> bytes:
         """One file out of a container, through the archive API. Nothing runs inside it."""
@@ -99,7 +115,7 @@ class Docker:
         return payload["Id"]
 
     def pull(self, ref: str) -> None:
-        name, tag = _split_ref(ref)
+        name, tag = split_ref(ref)
         query = urllib.parse.urlencode({"fromImage": name, "tag": tag})
         status, data = self._open("POST", f"/images/create?{query}", None)
         text = data.decode(errors="replace")
@@ -115,7 +131,7 @@ class Docker:
             raise DockerError(str(message)[:300])
 
     def tag(self, source: str, target: str) -> None:
-        name, tag = _split_ref(target)
+        name, tag = split_ref(target)
         query = urllib.parse.urlencode({"repo": name, "tag": tag})
         self._request("POST", f"/images/{urllib.parse.quote(source, safe='')}/tag?{query}")
 
@@ -127,30 +143,24 @@ class Docker:
     def exec(self, container: str, cmd: list[str]) -> tuple[int, str]:
         return self._exec(container, cmd)
 
-    def compose(self, project: str, file: Path, *args: str) -> None:
-        code, output = self._exec("dockge", [
-            "/usr/bin/docker", "compose",
-            "--project-directory", str(file.parent),
-            "-p", project,
-            "-f", str(file),
-            *args,
-        ])
+    def compose(self, stack: Stack, *args: str) -> None:
+        if not self.compose_container:
+            raise DockerError("no compose_container in config.toml")
+        code, output = self._exec(self.compose_container, ["/usr/bin/docker", *compose_args(stack), *args])
         if code != 0:
             raise DockerError(last_line(output) or f"compose exited {code}")
 
-    def recreate_dockge(self, image: str, file: Path) -> None:
-        """Compose from a one-shot container, so Dockge is not recreating itself."""
+    def recreate_runner(self, image: str, stack: Stack) -> None:
+        """Compose from a one-shot container, so the compose container is not recreating itself."""
+        name = f"updates-{stack.project}-recreate"
         try:
-            self._request("DELETE", "/containers/updates-dockge-recreate?force=1")
+            self._request("DELETE", f"/containers/{name}?force=1")
         except DockerError:
             pass
-        created = self._request("POST", "/containers/create?name=updates-dockge-recreate", {
+        created = self._request("POST", f"/containers/create?name={name}", {
             "Image": image,
             "Entrypoint": ["/usr/bin/docker"],
-            "Cmd": [
-                "compose", "--project-directory", str(file.parent),
-                "-p", "dockge", "-f", str(file), "up", "-d", "--pull", "never",
-            ],
+            "Cmd": [*compose_args(stack), "up", "-d", "--pull", "never"],
             "HostConfig": {"Binds": [
                 "/var/run/docker.sock:/var/run/docker.sock",
                 f"{STACKS}:{STACKS}",
@@ -162,7 +172,7 @@ class Docker:
             waited = self._request("POST", f"/containers/{container_id}/wait")
             logs = self._read(f"/containers/{container_id}/logs?stdout=1&stderr=1")
             if waited.get("StatusCode"):
-                raise DockerError(last_line(_demux_text(logs)) or f"dockge recreate exited {waited['StatusCode']}")
+                raise DockerError(last_line(_demux_text(logs)) or f"{stack.project} recreate exited {waited['StatusCode']}")
         finally:
             try:
                 self._request("DELETE", f"/containers/{container_id}?force=1")
@@ -269,7 +279,22 @@ def unused_image_prune_path() -> str:
     return "/images/prune?" + urllib.parse.urlencode({"filters": filters})
 
 
-def _split_ref(ref: str) -> tuple[str, str]:
+def stack_of(labels: dict[str, str]) -> Stack | None:
+    project = labels.get("com.docker.compose.project") or ""
+    files = tuple(path for path in (labels.get("com.docker.compose.project.config_files") or "").split(",") if path)
+    directory = labels.get("com.docker.compose.project.working_dir") or ""
+    if not (project and files and directory):
+        return None
+    return Stack(project, files, directory)
+
+
+def compose_args(stack: Stack) -> list[str]:
+    """Every file the project was started with: given -f, Compose reads no override file by itself."""
+    files = [part for path in stack.files for part in ("-f", path)]
+    return ["compose", "--project-directory", stack.directory, "-p", stack.project, *files]
+
+
+def split_ref(ref: str) -> tuple[str, str]:
     name, separator, tag = ref.rpartition(":")
     if not separator or "/" in tag:
         return ref, "latest"

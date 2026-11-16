@@ -7,7 +7,7 @@ machine path.
   updates/update.sh                update at 09:00, mail an error, hold the rest
   updates/update.sh --digest       Sunday noon mail, then prune unused images; no updates
   updates/update.sh --dry-run      decide only
-  updates/update.sh --check        confirm Dockge can run compose
+  updates/update.sh --check        confirm the compose container can run compose
   updates/update.sh --notify-only  mail new releases now, bump nothing
 """
 
@@ -21,8 +21,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from config import Config, ConfigError, load as load_config
 from jobs import Outcome, collect_notices, run
-from mail import Bump, Issue, pinned_letter, send
+from mail import Bump, Issue, pinned_letter, send, use_titles
 from runtime import HERE, Docker, DockerError, log
 
 STATE = HERE / "state"
@@ -52,6 +53,15 @@ def main(argv: list[str]) -> int:
     dry = "--dry-run" in argv
     digest = "--digest" in argv
     docker = Docker()
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        log(str(exc))
+        if dry or "--check" in argv:
+            return 1
+        return _config_failed(str(exc), digest)
+    use_titles(config.titles)
+    docker.compose_container = config.compose_container
     if "--check" in argv:
         return check(docker)
     stale = None
@@ -68,14 +78,14 @@ def main(argv: list[str]) -> int:
         if stale:
             log(f"cleared the lock of a run that started {stale} and did not finish")
         if digest:
-            code = _send_report(_notices(docker), [], [], dry, weekly=True)
+            code = _send_report(_notices(docker, config), [], [], dry, weekly=True)
             _weekly_prune(docker, dry)
             return code
         if "--notify-only" in argv:
-            return _send_notices(_notices(docker), dry)
+            return _send_notices(_notices(docker, config), dry)
         outcome = Outcome()
         try:
-            outcome = run(docker, dry, _load_rejected(), outcome)
+            outcome = run(docker, config, dry, _load_rejected(), outcome)
         except SystemExit:
             if not dry:
                 _keep_rollback_state(outcome)
@@ -93,9 +103,25 @@ def main(argv: list[str]) -> int:
             _unlock()
 
 
+def _config_failed(error: str, digest: bool) -> int:
+    """Nothing runs without a config. The error is mailed like a failed update, and the run fails, so the heartbeat goes down."""
+    taken, _stale = _lock()
+    if not taken:
+        log("another update is already running, so the config error is not mailed")
+        if digest:
+            _mark_due(_clock()[1])
+            log("the weekly mail moves to the next morning")
+        return 1
+    try:
+        _send_report([], [], [Issue("updater", f"{error}. Nothing was updated.")], False, weekly=digest)
+    finally:
+        _unlock()
+    return 1
+
+
 def check(docker: Docker) -> int:
     try:
-        code, output = docker.exec("dockge", ["/usr/bin/docker", "compose", "version"])
+        code, output = docker.exec(docker.compose_container, ["/usr/bin/docker", "compose", "version"])
     except DockerError as exc:
         log(f"compose check failed: {exc}")
         return 1
@@ -178,14 +204,14 @@ def _send_notices(notices, dry: bool) -> int:
     return failed
 
 
-def _notices(docker: Docker) -> list:
+def _notices(docker: Docker, config: Config) -> list:
     notices: list = []
     try:
         running = docker.names()
     except DockerError as exc:
         log(f"could not list containers: {exc}")
         running = set()
-    collect_notices(docker, running, notices)
+    collect_notices(docker, config, running, notices)
     return notices
 
 

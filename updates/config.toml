@@ -1,0 +1,110 @@
+# What the morning run updates and what the Sunday mail reports.
+# A container that is in no app is left alone.
+#
+# compose_container  runs `docker compose` for every stack. Its app is updated
+#                    last, from a one-shot container.
+#
+# [apps.<key>]       one row in the mail. <key> names its icon, icons/<key>.png,
+#                    and its lines in state/: a renamed key mails its pending
+#                    release again.
+#   title            the name in the mail
+#   policy           floating  pull the tag the containers run; roll back if not healthy
+#                    semver    a patch that morning, a new minor a week after its .0;
+#                              never rolled back, the database may have migrated
+#                    report    never changed; a newer release goes in the Sunday mail
+#   containers       updated together, and only if all are running; a report
+#                    app needs only the first. The first one's version is the
+#                    one in the mail.
+#   members          other containers of the app, only named in the log
+#   releases         github:<owner>/<repo>, hub:<namespace>/<repo> (library/ for
+#                    official images), or plex (the QNAP package, once)
+#   tag_prefix       before a version, makes its release tag and image tag ("v")
+#   image            floating, one container: the only image:tag it may run
+#   version_file     JSON in the container whose "version" is the app's, for
+#                    images with no version label
+#   version_command  prints "version X.Y.Z" in the container, for the same
+#
+# Compose project, service and files come from the labels Compose puts on each
+# container, so an override file is never dropped.
+
+compose_container = "dockge"
+
+[apps.immich]
+title = "Immich"
+policy = "semver"
+containers = ["immich_server", "immich_machine_learning"]
+members = ["immich_postgres", "immich_redis"]
+releases = "github:immich-app/immich"
+tag_prefix = "v"
+
+[apps.cloudflare-tunnel]
+title = "Cloudflared"
+policy = "floating"
+containers = ["cloudflare-tunnel"]
+releases = "github:cloudflare/cloudflared"
+version_command = ["cloudflared", "--version"]
+
+[apps.traefik]
+title = "Traefik"
+policy = "floating"
+containers = ["traefik"]
+image = "traefik:v3"
+releases = "github:traefik/traefik"
+tag_prefix = "v"
+
+[apps.uptime-kuma]
+title = "Uptime Kuma"
+policy = "floating"
+containers = ["uptime-kuma"]
+releases = "github:louislam/uptime-kuma"
+version_file = "/app/package.json"
+
+[apps.beszel]
+title = "Beszel"
+policy = "floating"
+containers = ["beszel", "beszel-agent"]
+releases = "github:henrygd/beszel"
+tag_prefix = "v"
+
+[apps.adguard]
+title = "AdGuard Home"
+policy = "report"
+containers = ["adguard"]
+releases = "github:AdguardTeam/AdGuardHome"
+
+[apps.homeassistant]
+title = "Home Assistant"
+policy = "report"
+containers = ["homeassistant"]
+releases = "github:home-assistant/core"
+
+[apps.zigbee2mqtt]
+title = "Zigbee2MQTT"
+policy = "report"
+containers = ["zigbee2mqtt"]
+releases = "github:Koenkk/zigbee2mqtt"
+
+[apps.opencloud-opencloud-1]
+title = "OpenCloud"
+policy = "report"
+containers = ["opencloud-opencloud-1"]
+members = ["opencloud-collabora-1", "opencloud-yjs-1"]
+releases = "github:opencloud-eu/opencloud"
+
+[apps.mosquitto]
+title = "Mosquitto"
+policy = "report"
+containers = ["mosquitto"]
+releases = "hub:library/eclipse-mosquitto"
+
+[apps.plex]
+title = "Plex"
+policy = "report"
+releases = "plex"
+
+[apps.dockge]
+title = "Dockge"
+policy = "floating"
+containers = ["dockge"]
+releases = "github:louislam/dockge"
+version_file = "/app/package.json"

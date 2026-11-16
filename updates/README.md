@@ -1,6 +1,6 @@
 # Container updates
 
-`update.sh` runs once a morning. It looks at what is actually running, bumps a short list of stateless containers, and sends mail only when something new happened. It does not run all day, and it does not update every stack.
+`update.sh` runs once a morning. It looks at what is actually running, bumps the apps `config.toml` lists, and sends mail only when something new happened. It does not run all day, and it does not update every stack.
 
 Installed in the NAS crontab. Updates run at 09:00, NAS time, after the QNAP jobs at 03:00 and 04:00. The weekly mail and the image prune run at noon on Sunday. Output goes to `updates/state/cron.log`, so `updates/state/` must exist before cron runs. Past 2 MB the log is cut to its last 5000 lines.
 
@@ -11,19 +11,23 @@ Installed in the NAS crontab. Updates run at 09:00, NAS time, after the QNAP job
 
 ## What it does
 
-| Running container | Action |
-| --- | --- |
-| Cloudflared, Traefik, Uptime Kuma, Beszel and its agent, Dockge | Pull the floating tag and recreate only if the image changed. Traefik must run `traefik:v3`; anything else is reported and left alone. |
-| Immich server and machine learning | A patch is taken that morning. A new minor's `.0` waits a week; a patch of that minor during the week is taken that morning. Server and machine learning move together. The exact tag is pulled and retagged as the tag the containers run (`:v3`), then Compose starts it with `--pull never`. |
-| AdGuard, Home Assistant, Zigbee2MQTT, Mosquitto, OpenCloud, Plex | Never bumped. A newer release is included once, in the Sunday mail. |
-| Immich Postgres and Valkey, Collabora, Yjs | Part of Immich or OpenCloud. Not listed on their own. |
-| Homer, devbox, ntfy, and anything else | Left alone. |
+`config.toml` lists the apps, one `[apps.<key>]` table each, and each app has a policy. Its header explains every field. A container in no app is left alone.
 
-Plex is the QNAP package, not a container. The script reads the version from Plex on `127.0.0.1:32400` and compares it with the public QNAP build. It never installs the package.
+| Policy | Action | Today |
+| --- | --- | --- |
+| `floating` | Pull the tag the containers run and recreate only if the image changed. With `image`, any other tag is reported and left alone. | Cloudflared, Traefik (`traefik:v3`), Uptime Kuma, Beszel and its agent, Dockge |
+| `semver` | Follows the GitHub releases. A patch is taken that morning. A new minor's `.0` waits a week; a patch of that minor during the week is taken that morning. The exact tag is pulled and retagged as the tag the containers run (`:v3`), then Compose starts it with `--pull never`. Never rolled back. | Immich server and machine learning |
+| `report` | Never bumped. A newer release is included once, in the Sunday mail. | AdGuard, Home Assistant, Zigbee2MQTT, Mosquitto, OpenCloud, Plex |
 
-A container that is not running is skipped. Beszel is skipped unless the hub and the agent are both up. Immich is skipped unless the server and machine learning are both up.
+`members` are the other containers of an app, such as Immich's Postgres and Valkey or OpenCloud's Collabora and Yjs. They are only named in the log.
 
-Dockge is recreated last, from a one-shot container, because the script uses Dockge to run Compose.
+Plex is the QNAP package, not a container (`releases = "plex"`). The script reads the version from Plex on `127.0.0.1:32400` and compares it with the public QNAP build. It never installs the package.
+
+A floating or semver app is skipped unless all its containers are running, and they move together. A report app only needs its first container running.
+
+Compose runs inside `compose_container` (Dockge), with the project, service and every file Compose put on the containers' labels, so an override file such as Immich's is never dropped. A container that Compose did not start is reported and left alone. The compose container's own app is recreated last, from a one-shot container.
+
+If `config.toml` cannot be read or has a mistake, nothing runs. The error is mailed like a failed update, and the run exits 1, so the heartbeat goes down.
 
 An error in one container is reported and the run goes on with the next. If the run is stopped midway, what already moved is kept for the Sunday mail.
 
@@ -37,7 +41,7 @@ If a recreate fails or the container does not become healthy, the previous image
 
 If restoring the previous image also fails, `state/prune.hold` is written and the weekly prune is skipped, so the previous image stays on disk. Each skipped prune is mailed the next morning as a reminder. Delete the file once the container is fixed.
 
-Immich is never rolled back, because the new server may already have migrated its database. A failed or unhealthy Immich update is mailed and left as it is. An unhealthy one still runs the new version, so it is also an **Updated** row in the Sunday mail. A version whose recreate failed is written to `state/rejected.tsv` and not tried again.
+A `semver` app, Immich, is never rolled back, because the new server may already have migrated its database. A failed or unhealthy Immich update is mailed and left as it is. An unhealthy one still runs the new version, so it is also an **Updated** row in the Sunday mail. A version whose recreate failed is written to `state/rejected.tsv` and not tried again.
 
 ## Images
 
@@ -49,7 +53,7 @@ An error is mailed that morning. The same failure is not mailed again the next m
 
 If the Sunday mail does not go out, or the noon run finds the morning run still holding the lock, `state/digest.due` makes the next morning send it. If the NAS misses Sunday, a stored bump goes out on the first weekday morning once it is a week old.
 
-The mail is one row per app, for the main container only: name on the left, version on the right. An automatic bump is an **Updated** row, from the version at the start of the week to the version it is running now. The version comes from the image label. Uptime Kuma and Dockge have none, so it is read from their `/app/package.json`; Cloudflared reports it with `cloudflared --version`. Immich, while a new minor waits out its week, is a **Newer releases** row.
+The mail is one row per app, for the main container only: name on the left, version on the right. An automatic bump is an **Updated** row, from the version at the start of the week to the version it is running now. The version comes from the image label. Uptime Kuma and Dockge have none, so `version_file` reads it from their `/app/package.json`; for Cloudflared, `version_command` runs `cloudflared --version`. Immich, while a new minor waits out its week, is a **Newer releases** row.
 
 Resend settings live in `updates/.env` (mode 600, gitignored). Copy `.env.example`. `RESEND_FROM` must use a domain verified in Resend.
 
@@ -67,17 +71,21 @@ The stacks directory is the parent of this folder. Nothing in the Python is pinn
 
 | File | Role |
 | --- | --- |
-| `update.sh` | Starts the run. Under cron (root) it runs `python:3.13-alpine` as the owner of this script, with the Docker socket and the stacks directory mounted. Then sends the heartbeat. |
+| `update.sh` | Starts the run. Under cron (root) it runs `python:3.14-alpine` as the owner of this script, with the Docker socket and the stacks directory mounted. Then sends the heartbeat. |
+| `config.toml` | The apps, their policy, releases and version sources, and the compose container. |
+| `config.py` | Reads `config.toml`, and refuses anything it does not understand. |
 | `update.py` | Lock, mail timing, weekly state, prune. `--dry-run`, `--check`, `--notify-only`, `--digest`. |
-| `jobs.py` | Which container is bumped, mailed, or left alone. |
+| `jobs.py` | One path per policy: what is bumped, mailed, or left alone. |
 | `releases.py` | Version rules, GitHub, Docker Hub, and the Plex download feed. |
 | `mail.py` | The card mail. |
-| `runtime.py` | Docker over the socket, API 1.41 or the daemon's minimum if that is newer. Compose runs inside the Dockge container. |
-| `test_update.py` | The week rule, rollback, Immich, the weekly state, the lock, the prune, release-check failures, and the mail. No Docker. |
+| `runtime.py` | Docker over the socket, API 1.41 or the daemon's minimum if that is newer. Compose runs inside the compose container, with the files from the container labels. |
+| `test_update.py` | The config and its mistakes, the same decisions as before the config, the week rule, rollback, Immich, Compose labels, the weekly state, the lock, the prune, release-check failures, and the mail. No Docker. |
+
+To add an app, add a table to `config.toml` and an icon as `icons/<key>.png`, then check with `--dry-run`.
 
 ```
 updates/update.sh --dry-run      decide only
-updates/update.sh --check        confirm Dockge can run Compose
+updates/update.sh --check        confirm the compose container can run Compose
 updates/update.sh --digest       Sunday mail and prune, no updates
 updates/update.sh --notify-only  mail new releases now, bump nothing
 ```

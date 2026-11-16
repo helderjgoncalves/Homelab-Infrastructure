@@ -59,7 +59,7 @@ heartbeat() {
   for arg in "$@"; do
     case $arg in --dry-run | --check | -h | --help) return 0 ;; esac
   done
-  token=$(sed -n 's/^KUMA_PUSH_TOKEN=//p' "$here/.env" 2>/dev/null | tr -d "\"' \r")
+  token=$(sed -n 's/^KUMA_PUSH_TOKEN=//p' "$here/.env" 2>/dev/null | head -n 1 | tr -d "\"' \r")
   [ -n "$token" ] || return 0
   if [ "$code" -eq 0 ]; then
     query="status=up&msg=OK"
@@ -82,7 +82,7 @@ else
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "$stacks:$stacks" \
     -w "$here" \
-    python:3.13-alpine \
+    python:3.14-alpine \
     python "$here/update.py" "$@"
 fi
 code=$?
