@@ -50,18 +50,41 @@ if [ "$(id -u)" -eq 0 ] && [ -f "$log_file" ]; then
   chown "$run_uid:$run_gid" "$log_file" 2>/dev/null
 fi
 
-if [ "$(id -u)" -ne 0 ] && command -v python3 >/dev/null 2>&1; then
-  exec python3 "$here/update.py" "$@"
-fi
+# Uptime Kuma push monitor. Sent from here, not from Python: Kuma listens on the
+# NAS loopback, and a run that never starts must not count as a good one.
+# Exit 0 means the run finished and any mail went out.
+heartbeat() {
+  code=$1
+  shift
+  for arg in "$@"; do
+    case $arg in --dry-run | --check | -h | --help) return 0 ;; esac
+  done
+  token=$(sed -n 's/^KUMA_PUSH_TOKEN=//p' "$here/.env" 2>/dev/null | tr -d "\"' \r")
+  [ -n "$token" ] || return 0
+  if [ "$code" -eq 0 ]; then
+    query="status=up&msg=OK"
+  else
+    query="status=down&msg=update.sh%20exited%20$code"
+  fi
+  curl -fsS -m 10 -o /dev/null "http://127.0.0.1:3001/api/push/$token?$query" ||
+    echo "heartbeat to Uptime Kuma failed" >&2
+}
 
-exec "$docker_bin" run --rm \
-  --user "$run_uid:$run_gid" \
-  --group-add 0 \
-  -e PLEX_VERSION \
-  -e UPDATE_WDAY \
-  -e UPDATE_TODAY \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$stacks:$stacks" \
-  -w "$here" \
-  python:3.13-alpine \
-  python "$here/update.py" "$@"
+if [ "$(id -u)" -ne 0 ] && command -v python3 >/dev/null 2>&1; then
+  python3 "$here/update.py" "$@"
+else
+  "$docker_bin" run --rm \
+    --user "$run_uid:$run_gid" \
+    --group-add 0 \
+    -e PLEX_VERSION \
+    -e UPDATE_WDAY \
+    -e UPDATE_TODAY \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "$stacks:$stacks" \
+    -w "$here" \
+    python:3.13-alpine \
+    python "$here/update.py" "$@"
+fi
+code=$?
+heartbeat "$code" "$@"
+exit "$code"

@@ -31,7 +31,7 @@ A release check that fails (GitHub, Docker Hub or the Plex feed) is only logged,
 
 ## When an update fails
 
-Healthy means its healthcheck passes within 6 minutes. A container without one, such as Beszel, must stay up for three checks 15 seconds apart. A container that restarts while it is checked is not healthy.
+Healthy means its healthcheck passes within 6 minutes. A container without one must stay up for three checks 15 seconds apart. A container that restarts while it is checked is not healthy.
 
 If a recreate fails or the container does not become healthy, the previous image is tagged back and the container is recreated. That failure is mailed that morning. The image that failed is written to `state/rejected.tsv` and is not tried again; the next new image is. Delete its line to try it again.
 
@@ -55,13 +55,19 @@ Resend settings live in `updates/.env` (mode 600, gitignored). Copy `.env.exampl
 
 `updates/state/` remembers what was already mailed. It is gitignored. A lock older than four hours belongs to a run that died; the next run clears it and mails that it did.
 
+## Heartbeat
+
+After every run except `--dry-run` and `--check`, `update.sh` tells an Uptime Kuma push monitor how it went: up when the run finished and any mail went out, down when it did not, such as when Resend is unreachable. Kuma alerts through ntfy on a down, and when a day passes with no heartbeat at all: cron stopped, or the run died before it could mail.
+
+In Kuma, add a Push monitor with a heartbeat interval of 90000 seconds (25 hours) and the ntfy notification. Put the token from its push URL, the part after `/api/push/`, in `updates/.env` as `KUMA_PUSH_TOKEN`. The script calls Kuma on `127.0.0.1:3001`, not the URL Kuma shows. Without a token, no heartbeat is sent.
+
 ## Layout
 
 The stacks directory is the parent of this folder. Nothing in the Python is pinned to a machine path.
 
 | File | Role |
 | --- | --- |
-| `update.sh` | Starts the run. Under cron (root) it runs `python:3.13-alpine` as the owner of this script, with the Docker socket and the stacks directory mounted. |
+| `update.sh` | Starts the run. Under cron (root) it runs `python:3.13-alpine` as the owner of this script, with the Docker socket and the stacks directory mounted. Then sends the heartbeat. |
 | `update.py` | Lock, mail timing, weekly state, prune. `--dry-run`, `--check`, `--notify-only`, `--digest`. |
 | `jobs.py` | Which container is bumped, mailed, or left alone. |
 | `releases.py` | Version rules, GitHub, Docker Hub, and the Plex download feed. |
