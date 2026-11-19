@@ -25,6 +25,17 @@ fi
 # Plex is a NAS package. Its version is read here and handed to Python.
 plex_version=$(curl -fsS -m 5 http://127.0.0.1:32400/identity 2>/dev/null | sed -n 's/.*MediaContainer.*version="\([^"]*\)".*/\1/p')
 export PLEX_VERSION="$plex_version"
+# QTS is the NAS firmware. Its build, model, and the Live Update feed QTS itself
+# reads are handed to Python. Off a QNAP these are empty and QTS is skipped.
+getcfg_bin=getcfg
+[ -x /sbin/getcfg ] && getcfg_bin=/sbin/getcfg
+qts() { "$getcfg_bin" System "$1" 2>/dev/null; }
+QTS_VERSION=$(qts Version)
+QTS_NUMBER=$(qts Number)
+QTS_BUILD=$(qts "Build Number")
+QTS_MODEL=$(qts Model)
+QTS_FEED=$(qts "QTS Live Update XML")
+export QTS_VERSION QTS_NUMBER QTS_BUILD QTS_MODEL QTS_FEED
 # Sunday mail and the seven-day retry use the NAS clock, not the container clock.
 export UPDATE_WDAY=$(date +%u)
 export UPDATE_TODAY=$(date +%F)
@@ -77,6 +88,11 @@ else
     --user "$run_uid:$run_gid" \
     --group-add 0 \
     -e PLEX_VERSION \
+    -e QTS_VERSION \
+    -e QTS_NUMBER \
+    -e QTS_BUILD \
+    -e QTS_MODEL \
+    -e QTS_FEED \
     -e UPDATE_WDAY \
     -e UPDATE_TODAY \
     -v /var/run/docker.sock:/var/run/docker.sock \

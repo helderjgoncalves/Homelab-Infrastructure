@@ -17,7 +17,8 @@
 #                    one in the mail.
 #   members          other containers of the app, only named in the log
 #   releases         github:<owner>/<repo>, hub:<namespace>/<repo> (library/ for
-#                    official images), or plex (the QNAP package, once)
+#                    official images), plex (the QNAP package, once), or qts
+#                    (the NAS firmware from QTS Live Update, once)
 #   tag_prefix       before a version, makes its release tag and image tag ("v")
 #   image            floating, one container: the only image:tag it may run
 #   version_file     JSON in the container whose "version" is the app's, for
@@ -101,6 +102,11 @@ releases = "hub:library/eclipse-mosquitto"
 title = "Plex"
 policy = "report"
 releases = "plex"
+
+[apps.qts]
+title = "QTS"
+policy = "report"
+releases = "qts"
 
 [apps.dockge]
 title = "Dockge"

@@ -11,7 +11,7 @@ import re
 
 from config import App, Config
 from mail import Bump, Issue, Notice
-from releases import choose, github_releases, hub_tags, latest_stable, newer, normalize_image, parse_version, plex_public, wait_note
+from releases import Firmware, choose, github_releases, hub_tags, latest_stable, newer, normalize_image, parse_version, plex_public, qts_public, wait_note
 from runtime import Container, Docker, DockerError, Stack, log, split_ref
 
 KINDS = {
@@ -21,6 +21,7 @@ KINDS = {
 }
 HOLD_NOTE = "Unused images are kept until updates/state/prune.hold is deleted."
 PLEX_DOWNLOADS = "https://www.plex.tv/media-server-downloads/"
+QTS_DOWNLOADS = "https://www.qnap.com/en/download"
 
 
 @dataclass
@@ -271,6 +272,9 @@ def collect_pinned(docker: Docker, config: Config, running: set[str], notices: l
         if app.releases == "plex":
             _plex(app, notices, unchecked)
             continue
+        if app.releases == "qts":
+            _qts(app, notices, unchecked)
+            continue
         try:
             _release_notice(docker, running, notices, app)
         except Exception as exc:
@@ -414,6 +418,36 @@ def _plex(app: App, notices: list[Notice], unchecked: list[tuple[str, str]] | No
         return
     notices.append(Notice(app.key, running, available, PLEX_DOWNLOADS))
     log(f"Plex {running} -> {available} (email)")
+
+
+def _qts(app: App, notices: list[Notice], unchecked: list[tuple[str, str]] | None = None) -> None:
+    """The NAS firmware. update.sh reads the running build and the Live Update feed QTS itself uses."""
+    running = Firmware(*(os.environ.get(f"QTS_{name}", "").strip() for name in ("VERSION", "NUMBER", "BUILD")))
+    feed = os.environ.get("QTS_FEED", "").strip()
+    model = os.environ.get("QTS_MODEL", "").strip()
+    if not running.version:
+        log("QTS version not read, skipped")
+        return
+    if running.order is None or not feed.startswith("https://") or not model:
+        log(f"QTS {running.label}: the version, feed or model could not be read")
+        return
+    try:
+        found = qts_public(feed, model)
+    except Exception as exc:
+        log(f"could not check QTS: {exc}")
+        if unchecked is not None:
+            unchecked.append((app.key, str(exc)))
+        return
+    if found is None or found.order is None:
+        log(f"could not check QTS: no firmware for {model} in {feed}")
+        if unchecked is not None:
+            unchecked.append((app.key, f"no firmware for {model}"))
+        return
+    if found.order <= running.order:
+        log(f"QTS {running.label} is current")
+        return
+    notices.append(Notice(app.key, running.label, found.label, found.url or QTS_DOWNLOADS))
+    log(f"QTS {running.label} -> {found.label} (email)")
 
 
 def _lower(left: str, right: str) -> str:

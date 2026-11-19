@@ -17,11 +17,13 @@ Installed in the NAS crontab. Updates run at 09:00, NAS time, after the QNAP job
 | --- | --- | --- |
 | `floating` | Pull the tag the containers run and recreate only if the image changed. With `image`, any other tag is reported and left alone. | Cloudflared, Traefik (`traefik:v3`), Uptime Kuma, Beszel and its agent, Dockge |
 | `semver` | Follows the GitHub releases. A patch is taken that morning. A new minor's `.0` waits a week; a patch of that minor during the week is taken that morning. The exact tag is pulled and retagged as the tag the containers run (`:v3`), then Compose starts it with `--pull never`. Never rolled back. | Immich server and machine learning |
-| `report` | Never bumped. A newer release is included once, in the Sunday mail. | AdGuard, Home Assistant, Zigbee2MQTT, Mosquitto, OpenCloud, Plex |
+| `report` | Never bumped. A newer release is included once, in the Sunday mail. | AdGuard, Home Assistant, Zigbee2MQTT, Mosquitto, OpenCloud, Plex, QTS |
 
 `members` are the other containers of an app, such as Immich's Postgres and Valkey or OpenCloud's Collabora and Yjs. They are only named in the log.
 
 Plex is the QNAP package, not a container (`releases = "plex"`). The script reads the version from Plex on `127.0.0.1:32400` and compares it with the public QNAP build. It never installs the package.
+
+QTS is the NAS firmware (`releases = "qts"`). The script reads the running version, build counter and build date with `getcfg`, and the model and Live Update feed from `/etc/config/uLinux.conf`, the same feed QTS itself checks. A newer version, or a rebuild of the same one, goes in the Sunday mail with its release notes. A model missing from the feed counts as a failed check. It never installs firmware.
 
 A floating or semver app is skipped unless all its containers are running, and they move together. A report app only needs its first container running.
 
@@ -31,7 +33,7 @@ If `config.toml` cannot be read or has a mistake, nothing runs. The error is mai
 
 An error in one container is reported and the run goes on with the next. If the run is stopped midway, what already moved is kept for the Sunday mail.
 
-A release check that fails (GitHub, Docker Hub or the Plex feed) is only logged, unless it fails three mornings in a row; then it is mailed once.
+A release check that fails (GitHub, Docker Hub, the Plex feed or QTS Live Update) is only logged, unless it fails three mornings in a row; then it is mailed once.
 
 ## When an update fails
 
@@ -76,7 +78,7 @@ The stacks directory is the parent of this folder. Nothing in the Python is pinn
 | `config.py` | Reads `config.toml`, and refuses anything it does not understand. |
 | `update.py` | Lock, mail timing, weekly state, prune. `--dry-run`, `--check`, `--notify-only`, `--digest`. |
 | `jobs.py` | One path per policy: what is bumped, mailed, or left alone. |
-| `releases.py` | Version rules, GitHub, Docker Hub, and the Plex download feed. |
+| `releases.py` | Version rules, GitHub, Docker Hub, the Plex download feed, and QTS Live Update. |
 | `mail.py` | The card mail. |
 | `runtime.py` | Docker over the socket, API 1.41 or the daemon's minimum if that is newer. Compose runs inside the compose container, with the files from the container labels. |
 | `test_update.py` | The config and its mistakes, the same decisions as before the config, the week rule, rollback, Immich, Compose labels, the weekly state, the lock, the prune, release-check failures, and the mail. No Docker. |

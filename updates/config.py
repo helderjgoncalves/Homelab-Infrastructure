@@ -15,7 +15,9 @@ POLICIES = ("floating", "semver", "report")
 # Keys the updater itself uses in the mail and in state/.
 RESERVED = {"docker", "images", "updater"}
 KEY = re.compile(r"[A-Za-z0-9_-]+")
-RELEASES = re.compile(r"github:[\w.-]+/[\w.-]+|hub:[\w.-]+/[\w.-]+|plex")
+RELEASES = re.compile(r"github:[\w.-]+/[\w.-]+|hub:[\w.-]+/[\w.-]+|plex|qts")
+# Releases of the NAS itself, read on the host by update.sh: no containers.
+HOST = {"plex": "plex is the QNAP package", "qts": "qts is the NAS firmware"}
 FIELDS = {"title", "policy", "containers", "members", "releases", "tag_prefix", "image", "version_file", "version_command"}
 
 
@@ -66,9 +68,10 @@ def load(path: Path = PATH) -> Config:
     if not isinstance(tables, dict) or not tables:
         raise ConfigError(f"{path.name}: no [apps.<key>] tables")
     apps = {key: _app(path.name, key, table) for key, table in tables.items()}
-    plex = [app.key for app in apps.values() if app.releases == "plex"]
-    if len(plex) > 1:
-        raise ConfigError(f"{path.name}: apps.{plex[0]} and apps.{plex[1]} both follow plex")
+    for source in HOST:
+        same = [app.key for app in apps.values() if app.releases == source]
+        if len(same) > 1:
+            raise ConfigError(f"{path.name}: apps.{same[0]} and apps.{same[1]} both follow {source}")
     seen: dict[str, str] = {}
     for app in apps.values():
         for name in (*app.containers, *app.members):
@@ -97,12 +100,12 @@ def _app(file: str, key: str, table) -> App:
     members = _names(where, table, "members")
     releases = _text(where, table, "releases")
     if releases and not RELEASES.fullmatch(releases):
-        raise ConfigError(f"{where}.releases must be github:<owner>/<repo>, hub:<namespace>/<repo> (hub:library/<name> for official images) or plex")
+        raise ConfigError(f"{where}.releases must be github:<owner>/<repo>, hub:<namespace>/<repo> (hub:library/<name> for official images), plex or qts")
     if policy in ("semver", "report") and not releases:
         raise ConfigError(f"{where}: a {policy} app needs releases")
-    if releases == "plex":
+    if releases in HOST:
         if policy != "report" or containers:
-            raise ConfigError(f"{where}: plex is the QNAP package, a report app with no containers")
+            raise ConfigError(f"{where}: {HOST[releases]}, a report app with no containers")
     elif not containers:
         raise ConfigError(f"{where}.containers is empty")
     if policy == "semver" and releases.startswith("hub:"):

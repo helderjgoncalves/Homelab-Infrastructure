@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
+import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -151,6 +152,52 @@ def plex_public() -> Release | None:
     if isinstance(raw, (int, float)):
         published = datetime.fromtimestamp(raw, timezone.utc)
     return Release(version, tag, published)
+
+
+@dataclass(frozen=True)
+class Firmware:
+    """A QTS build: version, build counter and build date. A rebuild of the same version is newer."""
+
+    version: str
+    number: str
+    build: str
+    url: str = ""
+
+    @property
+    def order(self) -> tuple[int, ...] | None:
+        version = parse_version(self.version)
+        if version is None or not self.number.isdigit():
+            return None
+        return (*_pad(version, 3), int(self.number), int(self.build) if self.build.isdigit() else 0)
+
+    @property
+    def label(self) -> str:
+        text = f"{self.version}.{self.number}"
+        return f"{text} build {self.build}" if self.build else text
+
+
+def qts_public(feed: str, model: str) -> Firmware | None:
+    """The firmware QTS Live Update offers this model, from the feed QTS itself reads."""
+    request = urllib.request.Request(feed, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return qts_firmware(response.read(), model)
+
+
+def qts_firmware(document: bytes, model: str) -> Firmware | None:
+    for entry in ElementTree.fromstring(document).iter("model"):
+        products = [name.strip() for name in (entry.findtext("productName") or "").split(",")]
+        if model != (entry.findtext("modelName") or "").strip() and model not in products:
+            continue
+        firmware = entry.find("firmware")
+        if firmware is None:
+            return None
+        return Firmware(
+            (firmware.findtext("version") or "").strip(),
+            (firmware.findtext("number") or "").strip(),
+            (firmware.findtext("buildNumber") or "").strip(),
+            (firmware.findtext("updateInfoURL") or "").strip(),
+        )
+    return None
 
 
 def normalize_image(ref: str) -> str:
