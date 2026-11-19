@@ -6,7 +6,7 @@
 cd "$(dirname "$0")" || exit 1
 here=$(pwd)
 self="$here/$(basename "$0")"
-stacks=$(CDPATH= cd -- "$here/.." && pwd) || exit 1
+stacks=$(CDPATH='' cd -- "$here/.." && pwd) || exit 1
 
 docker_bin=${DOCKER:-}
 if [ -z "$docker_bin" ]; then
@@ -37,8 +37,9 @@ QTS_MODEL=$(qts Model)
 QTS_FEED=$(qts "QTS Live Update XML")
 export QTS_VERSION QTS_NUMBER QTS_BUILD QTS_MODEL QTS_FEED
 # Sunday mail and the seven-day retry use the NAS clock, not the container clock.
-export UPDATE_WDAY=$(date +%u)
-export UPDATE_TODAY=$(date +%F)
+UPDATE_WDAY=$(date +%u)
+UPDATE_TODAY=$(date +%F)
+export UPDATE_WDAY UPDATE_TODAY
 
 # Cron on this NAS runs as admin. Keep the files the job writes with the
 # owner of this script, who can read .env.
