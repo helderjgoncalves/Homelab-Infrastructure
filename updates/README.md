@@ -37,6 +37,8 @@ A release check that fails (GitHub, Docker Hub, the Plex feed or QTS Live Update
 
 ## When an update fails
 
+Every failure is written to `state/cron.log` with its error, as well as mailed. A pull the registry answers with "too many requests" is tried three times, 30 seconds apart, before it counts as failed. Any other pull error fails at once. A failed pull changes no container, and nothing remembers it: the next morning tries the same release again.
+
 Healthy means its healthcheck passes within 6 minutes. A container without one must stay up for three checks 15 seconds apart. A container that restarts while it is checked is not healthy.
 
 If a recreate fails or the container does not become healthy, the previous image is tagged back and the container is recreated. That failure is mailed that morning. The image that failed is written to `state/rejected.tsv` and is not tried again; the next new image is. Delete its line to try it again.

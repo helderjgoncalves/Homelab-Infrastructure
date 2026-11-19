@@ -163,6 +163,8 @@ def merge_bumps(kept: list[Kept], bumps: list[Bump], today: date) -> list[Kept]:
 
 def _send_report(notices, bumps, issues, dry: bool, weekly: bool = False) -> int:
     wday, today = _clock()
+    for issue in issues:
+        log(f"{issue.name}: {issue.detail}")
     # The failure mail goes first, so a state file that cannot be written does not swallow it.
     fresh = _fresh(issues)
     failed_send = _deliver(pinned_letter([], None, fresh), dry) if fresh else 0

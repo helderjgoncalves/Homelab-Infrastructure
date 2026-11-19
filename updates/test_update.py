@@ -382,6 +382,54 @@ class ImmichTests(unittest.TestCase):
         self.assertEqual(self.docker.calls, [])
 
 
+class PullRetryTests(unittest.TestCase):
+    LIMITED = (500, '{"message":"toomanyrequests: retry-after: 66.816µs, allowed: 44000/minute"}'.encode())
+    STACK = Stack("immich", ("/stacks/immich/docker-compose.yml",), "/stacks/immich")
+
+    def setUp(self):
+        from runtime import Docker
+
+        self.docker = Docker(compose_container="dockge")
+        patcher = mock.patch("runtime.time.sleep")
+        self.sleep = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def pull(self, *answers: tuple[int, bytes]):
+        with mock.patch.object(self.docker, "_open", side_effect=list(answers)) as opened:
+            self.docker.pull("ghcr.io/immich-app/immich-server:v3.4.2")
+        return opened
+
+    def test_a_rate_limited_pull_is_tried_again(self):
+        opened = self.pull(self.LIMITED, (200, b'{"status":"Downloaded newer image"}'))
+        self.assertEqual(opened.call_count, 2)
+        self.sleep.assert_called_once_with(30)
+
+    def test_a_rate_limit_in_the_pull_stream_is_tried_again(self):
+        stream = b'{"status":"Pulling"}\n{"error":"toomanyrequests: Too Many Requests"}\n'
+        opened = self.pull((200, stream), (200, b'{"status":"Pulled"}'))
+        self.assertEqual(opened.call_count, 2)
+
+    def test_a_pull_still_rate_limited_after_three_tries_fails(self):
+        with self.assertRaisesRegex(DockerError, "toomanyrequests"):
+            self.pull(self.LIMITED, self.LIMITED, self.LIMITED)
+        self.assertEqual(self.sleep.call_count, 2)
+
+    def test_any_other_pull_error_fails_at_once(self):
+        with self.assertRaisesRegex(DockerError, "manifest unknown"):
+            self.pull((404, b'{"message":"manifest unknown"}'), (200, b""))
+        self.sleep.assert_not_called()
+
+    def test_compose_pull_is_tried_again_and_up_is_not(self):
+        limited = (1, "Error response from daemon: toomanyrequests: retry-after: 1s")
+        with mock.patch.object(self.docker, "_exec", side_effect=[limited, (0, "")]) as executed:
+            self.docker.compose(self.STACK, "pull", "immich-server")
+        self.assertEqual(executed.call_count, 2)
+        with mock.patch.object(self.docker, "_exec", side_effect=[limited, (0, "")]) as executed:
+            with self.assertRaises(DockerError):
+                self.docker.compose(self.STACK, "up", "-d", "--pull", "never", "immich-server")
+        self.assertEqual(executed.call_count, 1)
+
+
 class RunTests(unittest.TestCase):
     def setUp(self):
         patcher = mock.patch.dict(os.environ, {"PLEX_VERSION": "", "QTS_VERSION": ""})
@@ -618,6 +666,13 @@ class FailureMailTests(StateTests):
         self.assertEqual(update._unchecked_issues([], day + timedelta(days=2)), [])
         self.assertFalse(update.UNCHECKED.is_file())
         self.assertEqual(update._unchecked_issues([("plex", "down")], day + timedelta(days=3)), [])
+
+    def test_every_failure_is_logged_each_morning_with_its_error(self):
+        day = date(2026, 11, 16)
+        for offset in range(2):
+            with mock.patch.object(update, "log") as log:
+                self.report(day + timedelta(days=offset), issues=[self.PULL])
+            self.assertIn(mock.call(f"uptime-kuma: {self.PULL.detail}"), log.call_args_list)
 
     def test_the_weekly_mail_never_carries_failures(self):
         update._mark_due(date(2026, 11, 15))

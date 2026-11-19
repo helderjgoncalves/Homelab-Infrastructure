@@ -17,6 +17,8 @@ API = "1.41"
 HERE = Path(__file__).resolve().parent
 STACKS = HERE.parent
 SOCKET = "/var/run/docker.sock"
+PULL_ATTEMPTS = 3
+PULL_PAUSE = 30
 
 
 class DockerError(RuntimeError):
@@ -56,6 +58,24 @@ def last_line(text: str) -> str:
         if line.strip() and "Error loading config file" not in line:
             return line.strip()[:300]
     return ""
+
+
+def rate_limited(error: str) -> bool:
+    text = error.lower()
+    return "toomanyrequests" in text or "too many requests" in text
+
+
+def retry_rate_limit(what: str, action) -> None:
+    """A registry that answers "too many requests" usually lets the same pull through a moment later."""
+    for attempt in range(1, PULL_ATTEMPTS + 1):
+        try:
+            action()
+            return
+        except DockerError as exc:
+            if attempt == PULL_ATTEMPTS or not rate_limited(str(exc)):
+                raise
+            log(f"{what} was rate limited by the registry, trying again in {PULL_PAUSE} seconds")
+            time.sleep(PULL_PAUSE)
 
 
 def api_prefix(version_info: dict) -> str:
@@ -115,6 +135,9 @@ class Docker:
         return payload["Id"]
 
     def pull(self, ref: str) -> None:
+        retry_rate_limit(f"pull of {ref}", lambda: self._pull(ref))
+
+    def _pull(self, ref: str) -> None:
         name, tag = split_ref(ref)
         query = urllib.parse.urlencode({"fromImage": name, "tag": tag})
         status, data = self._open("POST", f"/images/create?{query}", None)
@@ -146,9 +169,16 @@ class Docker:
     def compose(self, stack: Stack, *args: str) -> None:
         if not self.compose_container:
             raise DockerError("no compose_container in config.toml")
-        code, output = self._exec(self.compose_container, ["/usr/bin/docker", *compose_args(stack), *args])
-        if code != 0:
-            raise DockerError(last_line(output) or f"compose exited {code}")
+
+        def once() -> None:
+            code, output = self._exec(self.compose_container, ["/usr/bin/docker", *compose_args(stack), *args])
+            if code != 0:
+                raise DockerError(last_line(output) or f"compose exited {code}")
+
+        if args[:1] == ("pull",):
+            retry_rate_limit(f"{stack.project} pull", once)
+        else:
+            once()
 
     def recreate_runner(self, image: str, stack: Stack) -> None:
         """Compose from a one-shot container, so the compose container is not recreating itself."""
