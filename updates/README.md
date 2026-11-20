@@ -16,8 +16,8 @@ Installed in the NAS crontab. Updates run at 09:00, NAS time, after the QNAP job
 | Policy | Action | Today |
 | --- | --- | --- |
 | `floating` | Pull the tag the containers run and recreate only if the image changed. With `image`, any other tag is reported and left alone. | Cloudflared, Traefik (`traefik:v3`), Uptime Kuma, Beszel and its agent, Dockge |
-| `semver` | Follows the GitHub releases. A patch is taken that morning. A new minor's `.0` waits a week; a patch of that minor during the week is taken that morning. The exact tag is pulled and retagged as the tag the containers run (`:v3`), then Compose starts it with `--pull never`. Never rolled back. | Immich server and machine learning |
-| `report` | Never bumped. A newer release is included once, in the Sunday mail. | AdGuard, Home Assistant, Zigbee2MQTT, Mosquitto, OpenCloud, Plex, QTS |
+| `semver` | Follows the GitHub releases. A patch is taken that morning. A new minor's `.0` waits a week; a patch of that minor during the week is taken that morning. The exact tag is pulled and retagged as the tag the containers run (`:v3`), then Compose starts it with `--pull never`. Never rolled back. `minor_wait_days = 0` takes a new minor that morning too. Another major is never taken. | Immich server and machine learning (`:v3`); AdGuard Home (`:v1`, a local tag, minors that morning) |
+| `report` | Never bumped. A newer release is included once, in the Sunday mail. | Home Assistant, Zigbee2MQTT, Mosquitto, OpenCloud, Plex, QTS |
 
 `members` are the other containers of an app, such as Immich's Postgres and Valkey or OpenCloud's Collabora and Yjs. They are only named in the log.
 
@@ -45,7 +45,7 @@ If a recreate fails or the container does not become healthy, the previous image
 
 If restoring the previous image also fails, `state/prune.hold` is written and the weekly prune is skipped, so the previous image stays on disk. Each skipped prune is mailed the next morning as a reminder. Delete the file once the container is fixed.
 
-A `semver` app, Immich, is never rolled back, because the new server may already have migrated its database. A failed or unhealthy Immich update is mailed and left as it is. An unhealthy one still runs the new version, so it is also an **Updated** row in the Sunday mail. A version whose recreate failed is written to `state/rejected.tsv` and not tried again.
+A `semver` app, Immich or AdGuard Home, is never rolled back, because the new version may already have migrated its database or config. A failed or unhealthy update is mailed and left as it is. For AdGuard that means LAN DNS is down until it is fixed, and the mail may not get out, since the NAS resolves through it. An unhealthy one still runs the new version, so it is also an **Updated** row in the Sunday mail. A version whose recreate failed is written to `state/rejected.tsv` and not tried again.
 
 ## Images
 

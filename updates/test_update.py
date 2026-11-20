@@ -174,6 +174,12 @@ class ChooseTests(unittest.TestCase):
         self.assertIsNone(tag)
         self.assertIsNone(waiting)
 
+    def test_no_minor_wait_takes_a_new_minor_that_morning_but_not_a_new_major(self):
+        releases = [release("v1.1.0", 0), release("v2.0.0", 0), release("v1.2.0", 0, prerelease=True)]
+        self.assertEqual(choose("v1.0.0", releases, NOW, timedelta(0)), ("v1.1.0", None))
+        undated = Release((1, 1, 0), "v1.1.0", None)
+        self.assertEqual(choose("v1.0.0", [undated], NOW, timedelta(0)), ("v1.1.0", None))
+
 
 class RollbackTests(unittest.TestCase):
     def test_apply_update_restores_when_unhealthy(self):
@@ -382,6 +388,34 @@ class ImmichTests(unittest.TestCase):
         self.assertEqual(self.docker.calls, [])
 
 
+class AdGuardTests(unittest.TestCase):
+    IMAGE = "adguard/adguardhome"
+
+    def update(self, releases) -> tuple[FakeDocker, Outcome]:
+        docker = FakeDocker(
+            {"adguard": Box(f"{self.IMAGE}:v1", "ag-old", "adguard", "adguard")},
+            {f"{self.IMAGE}:v1.1.0": "ag-new", f"{self.IMAGE}:v2.0.0": "ag-v2"},
+            {"ag-old": "v1.0.0", "ag-new": "v1.1.0", "ag-v2": "v2.0.0"},
+        )
+        outcome = Outcome()
+        with mock.patch.object(jobs, "github_releases", return_value=releases):
+            update_semver(docker, CONFIG, set(docker.boxes), False, outcome, frozenset(), APPS["adguard"])
+        return docker, outcome
+
+    def test_a_new_minor_is_taken_that_morning_and_tagged_v1(self):
+        now = datetime.now(timezone.utc)
+        docker, outcome = self.update([release("v1.1.0", 0, now=now), release("v2.0.0", 0, now=now)])
+        self.assertEqual([call[1] for call in docker.calls if call[0] == "pull"], [f"{self.IMAGE}:v1.1.0"])
+        self.assertEqual(docker.images[f"{self.IMAGE}:v1"], "ag-new")
+        self.assertEqual(docker.boxes["adguard"].image_id, "ag-new")
+        self.assertEqual([(bump.before, bump.after) for bump in outcome.bumps], [("1.0.0", "1.1.0")])
+
+    def test_a_new_major_alone_is_not_taken(self):
+        docker, outcome = self.update([release("v2.0.0", 30, now=datetime.now(timezone.utc))])
+        self.assertEqual(docker.calls, [])
+        self.assertEqual((outcome.bumps, outcome.notices, outcome.issues), ([], [], []))
+
+
 class PullRetryTests(unittest.TestCase):
     LIMITED = (500, '{"message":"toomanyrequests: retry-after: 66.816µs, allowed: 44000/minute"}'.encode())
     STACK = Stack("immich", ("/stacks/immich/docker-compose.yml",), "/stacks/immich")
@@ -466,13 +500,13 @@ class RunTests(unittest.TestCase):
 
     def test_a_failed_release_check_is_recorded_for_the_main_container(self):
         docker = FakeDocker({
-            "adguard": Box("adguard/adguardhome:v0.107.79", "ag", "adguard", "adguard"),
+            "zigbee2mqtt": Box("koenkk/zigbee2mqtt:2.14.3", "z2m", "zigbee2mqtt", "zigbee2mqtt"),
             "opencloud-collabora-1": Box("collabora/code:25.04.1.1", "co", "opencloud", "collabora"),
         })
         with mock.patch.object(jobs, "github_releases", side_effect=OSError("rate limited")), \
                 mock.patch.object(jobs, "hub_tags", side_effect=OSError("hub down")):
             outcome = run(docker, CONFIG, False)
-        self.assertEqual(outcome.unchecked, [("adguard", "rate limited")])
+        self.assertEqual(outcome.unchecked, [("zigbee2mqtt", "rate limited")])
         self.assertEqual(outcome.issues, [])
 
 
@@ -928,7 +962,7 @@ class SameAsBeforeConfigTests(unittest.TestCase):
 
     FLOATING = {"cloudflare-tunnel": None, "traefik": "traefik:v3", "uptime-kuma": None}
     GITHUB = {
-        "adguard": "AdguardTeam/AdGuardHome", "homeassistant": "home-assistant/core",
+        "homeassistant": "home-assistant/core",
         "zigbee2mqtt": "Koenkk/zigbee2mqtt", "opencloud-opencloud-1": "opencloud-eu/opencloud",
     }
     HUB = {"mosquitto": "library/eclipse-mosquitto"}
@@ -947,6 +981,7 @@ class SameAsBeforeConfigTests(unittest.TestCase):
         "cloudflare-tunnel": ("https://github.com/cloudflare/cloudflared/releases", False),
         "beszel": ("https://github.com/henrygd/beszel/releases", True),
         "uptime-kuma": ("https://github.com/louislam/uptime-kuma/releases", False),
+        "adguard": ("https://github.com/AdguardTeam/AdGuardHome/releases", True),
         "dockge": ("https://github.com/louislam/dockge/releases", False),
         "immich": ("https://github.com/immich-app/immich/releases", True),
     }
@@ -972,10 +1007,12 @@ class SameAsBeforeConfigTests(unittest.TestCase):
         self.assertEqual(APPS["beszel"].containers, ("beszel", "beszel-agent"))
         self.assertEqual(CONFIG.compose_container, "dockge")
 
-    def test_immich_is_the_only_semver_app(self):
-        self.assertEqual(list(self.by_policy("semver")), ["immich"])
+    def test_immich_and_adguard_are_the_semver_apps(self):
+        self.assertEqual(list(self.by_policy("semver")), ["immich", "adguard"])
         self.assertEqual(APPS["immich"].containers, self.IMMICH)
         self.assertEqual(APPS["immich"].releases, "github:immich-app/immich")
+        self.assertEqual((APPS["immich"].minor_wait_days, APPS["adguard"].minor_wait_days), (7, 0))
+        self.assertEqual(APPS["adguard"].releases, "github:AdguardTeam/AdGuardHome")
 
     def test_the_same_pinned_apps_are_checked(self):
         reported = {app.main: app.releases for app in self.by_policy("report").values() if app.releases not in ("plex", "qts")}
@@ -1006,7 +1043,7 @@ class SameAsBeforeConfigTests(unittest.TestCase):
                 mock.patch.object(jobs, "update_semver", lambda *args: order.append(args[-1].key)), \
                 mock.patch.object(jobs, "collect_pinned", lambda *args: order.append("pinned")):
             run(FakeDocker({}), CONFIG, False)
-        self.assertEqual(order, ["immich", "cloudflare-tunnel", "traefik", "uptime-kuma", "beszel", "pinned", "dockge"])
+        self.assertEqual(order, ["immich", "cloudflare-tunnel", "traefik", "uptime-kuma", "beszel", "adguard", "pinned", "dockge"])
 
 
 class ConfigTests(unittest.TestCase):
@@ -1074,6 +1111,9 @@ containers = ["dockge"]
             (self.BASE + app + 'policy = "report"\ncontainers = ["x"]\nreleases = "qts"\n', "qts is the NAS firmware"),
             (self.BASE + app + 'policy = "floating"\nreleases = "qts"\n', "qts is the NAS firmware"),
             (self.BASE + app + 'policy = "report"\nreleases = "qts"\n' + '\n[apps.y]\ntitle = "Y"\npolicy = "report"\nreleases = "qts"\n', "apps.x and apps.y both follow qts"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nminor_wait_days = 0\n', "minor_wait_days is for semver apps"),
+            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nminor_wait_days = -1\n', "whole number of days"),
+            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nminor_wait_days = "0"\n', "whole number of days"),
         ]
         for text, message in cases:
             with self.subTest(message=message):

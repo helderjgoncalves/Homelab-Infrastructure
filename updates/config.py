@@ -18,7 +18,8 @@ KEY = re.compile(r"[A-Za-z0-9_-]+")
 RELEASES = re.compile(r"github:[\w.-]+/[\w.-]+|hub:[\w.-]+/[\w.-]+|plex|qts")
 # Releases of the NAS itself, read on the host by update.sh: no containers.
 HOST = {"plex": "plex is the QNAP package", "qts": "qts is the NAS firmware"}
-FIELDS = {"title", "policy", "containers", "members", "releases", "tag_prefix", "image", "version_file", "version_command"}
+FIELDS = {"title", "policy", "containers", "members", "releases", "tag_prefix", "minor_wait_days", "image", "version_file", "version_command"}
+MINOR_WAIT_DAYS = 7
 
 
 class ConfigError(ValueError):
@@ -37,6 +38,7 @@ class App:
     image: str = ""
     version_file: str = ""
     version_command: tuple[str, ...] = ()
+    minor_wait_days: int = MINOR_WAIT_DAYS
 
     @property
     def main(self) -> str:
@@ -110,6 +112,11 @@ def _app(file: str, key: str, table) -> App:
         raise ConfigError(f"{where}.containers is empty")
     if policy == "semver" and releases.startswith("hub:"):
         raise ConfigError(f"{where}: a semver app follows GitHub releases")
+    minor_wait_days = table.get("minor_wait_days", MINOR_WAIT_DAYS)
+    if isinstance(minor_wait_days, bool) or not isinstance(minor_wait_days, int) or minor_wait_days < 0:
+        raise ConfigError(f"{where}.minor_wait_days must be a whole number of days, 0 or more")
+    if "minor_wait_days" in table and policy != "semver":
+        raise ConfigError(f"{where}.minor_wait_days is for semver apps")
     image = normalize_image(_text(where, table, "image")).removeprefix("library/")
     if image and (policy != "floating" or len(containers) != 1):
         raise ConfigError(f"{where}.image is for a floating app with one container")
@@ -127,7 +134,7 @@ def _app(file: str, key: str, table) -> App:
         raise ConfigError(f"{where}.version_file must be an absolute path in the container")
     return App(
         key, title, policy, containers, members, releases, _text(where, table, "tag_prefix"),
-        image, version_file, tuple(command),
+        image, version_file, tuple(command), minor_wait_days,
     )
 
 

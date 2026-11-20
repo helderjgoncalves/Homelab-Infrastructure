@@ -8,7 +8,11 @@ name: adguard
 services:
   adguard:
     container_name: adguard
-    image: adguard/adguardhome:v0.107.80
+    # `v1` is a local tag: updates/ pulls each v1.x.y release and tags it
+    # `v1`. AdGuard publishes no such tag, so a first deploy needs
+    # `docker pull adguard/adguardhome:v1.0.0` and
+    # `docker tag adguard/adguardhome:v1.0.0 adguard/adguardhome:v1`.
+    image: adguard/adguardhome:v1
     networks:
       macvlan_dns:
         ipv4_address: ${ADGUARD_IP:?set ADGUARD_IP in .env}

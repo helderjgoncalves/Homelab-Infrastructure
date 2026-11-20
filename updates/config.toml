@@ -20,6 +20,7 @@
 #                    official images), plex (the QNAP package, once), or qts
 #                    (the NAS firmware from QTS Live Update, once)
 #   tag_prefix       before a version, makes its release tag and image tag ("v")
+#   minor_wait_days  semver: days a new minor's .0 waits, 7 unless set; 0 takes it that morning
 #   image            floating, one container: the only image:tag it may run
 #   version_file     JSON in the container whose "version" is the app's, for
 #                    images with no version label
@@ -69,9 +70,11 @@ tag_prefix = "v"
 
 [apps.adguard]
 title = "AdGuard Home"
-policy = "report"
+policy = "semver"
 containers = ["adguard"]
 releases = "github:AdguardTeam/AdGuardHome"
+tag_prefix = "v"
+minor_wait_days = 0
 
 [apps.homeassistant]
 title = "Home Assistant"

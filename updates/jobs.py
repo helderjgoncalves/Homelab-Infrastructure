@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import json
 import os
 import re
 
-from config import App, Config
+from config import MINOR_WAIT_DAYS, App, Config
 from mail import Bump, Issue, Notice
 from releases import Firmware, choose, github_releases, hub_tags, latest_stable, newer, normalize_image, parse_version, plex_public, qts_public, wait_note
 from runtime import Container, Docker, DockerError, Stack, log, split_ref
@@ -40,7 +40,10 @@ class Outcome:
 def classify(config: Config, names: set[str]) -> None:
     kinds: dict[str, str] = {}
     for app in config.apps.values():
-        kinds.update({name: KINDS[app.policy] for name in app.containers})
+        kind = KINDS[app.policy]
+        if app.policy == "semver" and app.minor_wait_days != MINOR_WAIT_DAYS:
+            kind = "patch or minor now, never a new major" if not app.minor_wait_days else f"patch now, a new minor waits {app.minor_wait_days} days"
+        kinds.update({name: kind for name in app.containers})
         kinds.update({name: f"part of {app.title}" for name in app.members})
     log("running containers:")
     for name in sorted(names):
@@ -150,7 +153,7 @@ def semver_plan(docker: Docker, running: set[str], app: App, unchecked: list[tup
         if unchecked is not None:
             unchecked.append((app.key, str(exc)))
         return None
-    tag, held = choose(current, releases, datetime.now(timezone.utc))
+    tag, held = choose(current, releases, datetime.now(timezone.utc), timedelta(days=app.minor_wait_days))
     return infos, current, tag, held
 
 
@@ -349,7 +352,7 @@ def _waiting_notice(app: App, current: str, held, notices: list[Notice]) -> None
     running_version = current.lstrip("v")
     available = held.tag.lstrip("v")
     notices.append(Notice(app.key, running_version, available, _release_page(app, held.tag)))
-    log(f"{app.key} {running_version} -> {available}, {wait_note(held)}")
+    log(f"{app.key} {running_version} -> {available}, {wait_note(held, timedelta(days=app.minor_wait_days))}")
 
 
 def _bumped(docker: Docker, bumps: list[Bump], app: App, before: str) -> None:

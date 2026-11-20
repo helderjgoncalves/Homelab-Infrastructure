@@ -41,12 +41,12 @@ def _pad(version: tuple[int, ...], size: int) -> tuple[int, ...]:
     return version + (0,) * (size - len(version))
 
 
-def choose(current: str, releases: list[Release], now: datetime) -> tuple[str | None, Release | None]:
-    """Return (tag to install, minor that is still inside its week).
+def choose(current: str, releases: list[Release], now: datetime, wait: timedelta = MINOR_WAIT) -> tuple[str | None, Release | None]:
+    """Return (tag to install, minor that is still inside its wait).
 
-    A x.y.0 release is eligible a week after it was published. Any patch,
-    including a patch of a newer minor, is eligible immediately. Other majors
-    are ignored.
+    A x.y.0 release is eligible `wait` after it was published, a week unless
+    the app says otherwise. Any patch, including a patch of a newer minor, is
+    eligible immediately. Other majors are ignored.
     """
     current_version = parse_version(current)
     if current_version is None:
@@ -58,7 +58,7 @@ def choose(current: str, releases: list[Release], now: datetime) -> tuple[str | 
             continue
         if release.version[0] != current_version[0] or not newer(release.version, current_version):
             continue
-        if _eligible(current_version, release, now):
+        if _eligible(current_version, release, now, wait):
             if best is None or newer(release.version, best.version):
                 best = release
         elif _is_new_minor(current_version, release) and (waiting is None or newer(release.version, waiting.version)):
@@ -68,12 +68,12 @@ def choose(current: str, releases: list[Release], now: datetime) -> tuple[str | 
     return (best.tag if best else None), waiting
 
 
-def _eligible(current: tuple[int, ...], release: Release, now: datetime) -> bool:
-    if not _is_new_minor(current, release):
+def _eligible(current: tuple[int, ...], release: Release, now: datetime, wait: timedelta) -> bool:
+    if not _is_new_minor(current, release) or wait <= timedelta(0):
         return True
     if release.published is None:
         return False
-    return now - release.published >= MINOR_WAIT
+    return now - release.published >= wait
 
 
 def _is_new_minor(current: tuple[int, ...], release: Release) -> bool:
@@ -83,10 +83,10 @@ def _is_new_minor(current: tuple[int, ...], release: Release) -> bool:
     return minor != current_minor and patch == 0
 
 
-def wait_note(release: Release) -> str:
+def wait_note(release: Release, wait: timedelta = MINOR_WAIT) -> str:
     if release.published is None:
         return f"{release.tag} is a new minor and its publish date could not be read, so it waits"
-    eligible = (release.published + MINOR_WAIT).date().isoformat()
+    eligible = (release.published + wait).date().isoformat()
     return f"{release.tag} published {release.published.date().isoformat()}, eligible {eligible}"
 
 
