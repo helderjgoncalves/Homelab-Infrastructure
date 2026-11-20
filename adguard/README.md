@@ -47,7 +47,7 @@ window at boot are covered in the [`nas-host/` README](../nas-host/README.md).
 
 | Path | Tracked | What |
 | --- | --- | --- |
-| `docker-compose.yml` | yes | Image `v1`, a local tag [`updates/`](../updates/) moves to each new v1 release the morning it is out; never rolled back, never v2 |
+| `docker-compose.yml` | yes | Image `v1.0`, a local tag [`updates/`](../updates/) moves to each v1.0.x patch the morning it is out. A new minor is only mailed, because AdGuard minors may break things; move to it by hand (see the comment in the file). A patch that is not healthy is rolled back with `conf/AdGuardHome.yaml` as it was |
 | `.env.example` | yes | Copy to `.env`; macvlan address and network for Compose |
 | `conf/AdGuardHome.yaml.example` | yes | DNS resolvers, blocklists and DNS rewrites, with placeholder tokens |
 | `conf/AdGuardHome.yaml` | no | Live config, written by AdGuard Home; holds the admin password hash |

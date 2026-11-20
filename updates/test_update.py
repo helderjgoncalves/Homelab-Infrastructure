@@ -65,7 +65,18 @@ class FakeDocker:
         self.prune_error: str | None = None
         self.files: dict[tuple[str, str], bytes] = {}
         self.outputs: dict[tuple[str, str], str] = {}
+        self.archives: dict[tuple[str, str], bytes] = {}
         self.compose_container = ""
+
+    def archive(self, name: str, path: str) -> bytes:
+        self.calls.append(("archive", name, path))
+        if (name, path) not in self.archives:
+            raise DockerError(f"{path} not found in {name}")
+        return self.archives[(name, path)]
+
+    def put_archive(self, name: str, path: str, data: bytes) -> None:
+        self.calls.append(("put_archive", name, path, data))
+        self.archives[(name, path)] = data
 
     def exec(self, name: str, cmd: list[str]) -> tuple[int, str]:
         output = self.outputs.get((name, self.boxes[name].image_id))
@@ -174,11 +185,11 @@ class ChooseTests(unittest.TestCase):
         self.assertIsNone(tag)
         self.assertIsNone(waiting)
 
-    def test_no_minor_wait_takes_a_new_minor_that_morning_but_not_a_new_major(self):
-        releases = [release("v1.1.0", 0), release("v2.0.0", 0), release("v1.2.0", 0, prerelease=True)]
-        self.assertEqual(choose("v1.0.0", releases, NOW, timedelta(0)), ("v1.1.0", None))
-        undated = Release((1, 1, 0), "v1.1.0", None)
-        self.assertEqual(choose("v1.0.0", [undated], NOW, timedelta(0)), ("v1.1.0", None))
+    def test_a_pinned_minor_takes_patches_and_holds_back_any_newer_minor(self):
+        releases = [release("v1.0.1", 0), release("v1.1.0", 30), release("v1.1.2", 9), release("v2.0.0", 0), release("v1.2.0", 0, prerelease=True)]
+        tag, waiting = choose("v1.0.0", releases, NOW, pin_minor=True)
+        self.assertEqual((tag, waiting.tag), ("v1.0.1", "v1.1.2"))
+        self.assertEqual(choose("v1.0.1", releases[1:3], NOW, pin_minor=True)[0], None)
 
 
 class RollbackTests(unittest.TestCase):
@@ -294,6 +305,19 @@ class RollbackTests(unittest.TestCase):
             with self.assertRaises(DockerError):
                 docker.read_file("uptime-kuma", "/app/package.json")
 
+    def test_put_archive_sends_the_tar_to_the_files_directory(self):
+        from runtime import Docker
+
+        docker = Docker()
+        with mock.patch.object(docker, "_open", return_value=(200, b"")) as opened:
+            docker.put_archive("adguard", "/opt/adguardhome/conf/AdGuardHome.yaml", b"tar")
+        method, path, body = opened.call_args.args
+        self.assertEqual((method, path, body), ("PUT", "/containers/adguard/archive?path=%2Fopt%2Fadguardhome%2Fconf", b"tar"))
+        self.assertEqual(opened.call_args.kwargs, {"content_type": "application/x-tar"})
+        with mock.patch.object(docker, "_open", return_value=(404, b'{"message":"no such container"}')):
+            with self.assertRaisesRegex(DockerError, "no such container"):
+                docker.put_archive("adguard", "/opt/adguardhome/conf/AdGuardHome.yaml", b"tar")
+
     def wait(self, states: list[tuple[str, str, int]]) -> bool:
         from runtime import Docker
 
@@ -390,30 +414,91 @@ class ImmichTests(unittest.TestCase):
 
 class AdGuardTests(unittest.TestCase):
     IMAGE = "adguard/adguardhome"
+    CONF = "/opt/adguardhome/conf/AdGuardHome.yaml"
 
-    def update(self, releases) -> tuple[FakeDocker, Outcome]:
-        docker = FakeDocker(
-            {"adguard": Box(f"{self.IMAGE}:v1", "ag-old", "adguard", "adguard")},
-            {f"{self.IMAGE}:v1.1.0": "ag-new", f"{self.IMAGE}:v2.0.0": "ag-v2"},
-            {"ag-old": "v1.0.0", "ag-new": "v1.1.0", "ag-v2": "v2.0.0"},
+    def setUp(self):
+        self.docker = FakeDocker(
+            {"adguard": Box(f"{self.IMAGE}:v1.0", "ag-old", "adguard", "adguard")},
+            {f"{self.IMAGE}:v1.0.1": "ag-new", f"{self.IMAGE}:v1.1.0": "ag-minor", f"{self.IMAGE}:v2.0.0": "ag-v2"},
+            {"ag-old": "v1.0.0", "ag-new": "v1.0.1", "ag-minor": "v1.1.0", "ag-v2": "v2.0.0"},
         )
-        outcome = Outcome()
-        with mock.patch.object(jobs, "github_releases", return_value=releases):
-            update_semver(docker, CONFIG, set(docker.boxes), False, outcome, frozenset(), APPS["adguard"])
-        return docker, outcome
-
-    def test_a_new_minor_is_taken_that_morning_and_tagged_v1(self):
+        self.docker.archives[("adguard", self.CONF)] = b"schema 35"
         now = datetime.now(timezone.utc)
-        docker, outcome = self.update([release("v1.1.0", 0, now=now), release("v2.0.0", 0, now=now)])
-        self.assertEqual([call[1] for call in docker.calls if call[0] == "pull"], [f"{self.IMAGE}:v1.1.0"])
-        self.assertEqual(docker.images[f"{self.IMAGE}:v1"], "ag-new")
-        self.assertEqual(docker.boxes["adguard"].image_id, "ag-new")
-        self.assertEqual([(bump.before, bump.after) for bump in outcome.bumps], [("1.0.0", "1.1.0")])
+        self.releases = [release("v1.0.1", 0, now=now), release("v1.1.0", 30, now=now), release("v2.0.0", 0, now=now)]
 
-    def test_a_new_major_alone_is_not_taken(self):
-        docker, outcome = self.update([release("v2.0.0", 30, now=datetime.now(timezone.utc))])
-        self.assertEqual(docker.calls, [])
+    def update(self, rejected=frozenset()) -> Outcome:
+        outcome = Outcome()
+        with mock.patch.object(jobs, "github_releases", return_value=self.releases):
+            update_semver(self.docker, CONFIG, set(self.docker.boxes), False, outcome, rejected, APPS["adguard"])
+        return outcome
+
+    def test_a_patch_is_taken_that_morning_and_tagged_v1_0(self):
+        outcome = self.update()
+        self.assertEqual([call[1] for call in self.docker.calls if call[0] == "pull"], [f"{self.IMAGE}:v1.0.1"])
+        self.assertEqual(self.docker.images[f"{self.IMAGE}:v1.0"], "ag-new")
+        self.assertEqual(self.docker.boxes["adguard"].image_id, "ag-new")
+        self.assertEqual([(bump.before, bump.after) for bump in outcome.bumps], [("1.0.0", "1.0.1")])
+        self.assertEqual(outcome.issues, [])
+
+    def test_a_new_minor_is_only_mailed(self):
+        self.releases = self.releases[1:]
+        outcome = self.update()
+        self.assertEqual(self.docker.calls, [])
+        self.assertEqual(outcome.notices, [Notice("adguard", "1.0.0", "1.1.0", "https://github.com/AdguardTeam/AdGuardHome/releases/tag/v1.1.0")])
+        self.assertEqual((outcome.bumps, outcome.issues), ([], []))
+
+    def test_a_new_major_alone_is_not_taken_or_mailed(self):
+        self.releases = self.releases[2:]
+        outcome = self.update()
+        self.assertEqual(self.docker.calls, [])
         self.assertEqual((outcome.bumps, outcome.notices, outcome.issues), ([], [], []))
+
+    def test_an_unhealthy_update_is_rolled_back_with_its_config_put_back_first(self):
+        self.docker.unhealthy = {"ag-new"}
+        self.docker.archives[("adguard", self.CONF)] = b"schema 35"
+
+        def migrate(stack, *args):
+            original(stack, *args)
+            if args[:2] == ("up", "-d") and self.docker.boxes["adguard"].image_id == "ag-new":
+                self.docker.archives[("adguard", self.CONF)] = b"schema 36"
+
+        original, self.docker.compose = self.docker.compose, migrate
+        outcome = self.update()
+        self.assertEqual(self.docker.boxes["adguard"].image_id, "ag-old")
+        self.assertEqual(self.docker.images[f"{self.IMAGE}:v1.0"], "ag-old")
+        self.assertEqual(self.docker.archives[("adguard", self.CONF)], b"schema 35")
+        steps = [call[:3] for call in self.docker.calls if call[0] in ("compose", "put_archive")][-3:]
+        self.assertEqual(steps, [("compose", "adguard", "up"), ("put_archive", "adguard", self.CONF), ("compose", "adguard", "start")])
+        self.assertIn("--no-start", self.docker.calls[self.docker.calls.index(("put_archive", "adguard", self.CONF, b"schema 35")) - 1])
+        self.assertEqual(outcome.rejected, [("adguard", "v1.0.1")])
+        self.assertIn("v1.0.1 did not become healthy. The previous image was restored.", outcome.issues[0].detail)
+        self.assertEqual((outcome.bumps, outcome.hold), ([], []))
+
+    def test_a_failed_recreate_is_rolled_back_and_not_tried_again(self):
+        self.docker.fail_up = 1
+        outcome = self.update()
+        self.assertEqual(self.docker.boxes["adguard"].image_id, "ag-old")
+        self.assertIn("Recreate failed: up failed. The previous image was restored.", outcome.issues[0].detail)
+        self.docker.calls.clear()
+        self.update(set(outcome.rejected))
+        self.assertEqual(self.docker.calls, [])
+
+    def test_a_failed_restore_keeps_the_previous_image_from_the_prune(self):
+        self.docker.unhealthy = {"ag-new", "ag-old"}
+        outcome = self.update()
+        self.assertIn("Restoring the previous image failed.", outcome.issues[0].detail)
+        self.assertIn(HOLD_NOTE, outcome.issues[0].detail)
+        self.assertEqual(len(outcome.hold), 1)
+        self.assertEqual(outcome.rejected, [])
+
+    def test_no_backup_no_update(self):
+        del self.docker.archives[("adguard", self.CONF)]
+        outcome = self.update()
+        self.assertFalse([call for call in self.docker.calls if call[0] in ("pull", "tag", "compose")])
+        self.assertIn("could not be backed up first", outcome.issues[0].detail)
+
+    def test_immich_is_still_not_rolled_back(self):
+        self.assertEqual((APPS["immich"].rollback, APPS["immich"].rollback_files), (False, ()))
 
 
 class PullRetryTests(unittest.TestCase):
@@ -1011,7 +1096,7 @@ class SameAsBeforeConfigTests(unittest.TestCase):
         self.assertEqual(list(self.by_policy("semver")), ["immich", "adguard"])
         self.assertEqual(APPS["immich"].containers, self.IMMICH)
         self.assertEqual(APPS["immich"].releases, "github:immich-app/immich")
-        self.assertEqual((APPS["immich"].minor_wait_days, APPS["adguard"].minor_wait_days), (7, 0))
+        self.assertEqual((APPS["immich"].pin_minor, APPS["adguard"].pin_minor), (False, True))
         self.assertEqual(APPS["adguard"].releases, "github:AdguardTeam/AdGuardHome")
 
     def test_the_same_pinned_apps_are_checked(self):
@@ -1111,9 +1196,12 @@ containers = ["dockge"]
             (self.BASE + app + 'policy = "report"\ncontainers = ["x"]\nreleases = "qts"\n', "qts is the NAS firmware"),
             (self.BASE + app + 'policy = "floating"\nreleases = "qts"\n', "qts is the NAS firmware"),
             (self.BASE + app + 'policy = "report"\nreleases = "qts"\n' + '\n[apps.y]\ntitle = "Y"\npolicy = "report"\nreleases = "qts"\n', "apps.x and apps.y both follow qts"),
-            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nminor_wait_days = 0\n', "minor_wait_days is for semver apps"),
-            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nminor_wait_days = -1\n', "whole number of days"),
-            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nminor_wait_days = "0"\n', "whole number of days"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\npin_minor = true\n', "pin_minor is for semver apps"),
+            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\npin_minor = 1\n', "pin_minor must be true or false"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nrollback = true\n', "a floating app always rolls back"),
+            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nrollback = "yes"\n', "rollback must be true or false"),
+            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nrollback_files = ["/a"]\n', "needs rollback = true"),
+            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nrollback = true\nrollback_files = ["a"]\n', "absolute paths"),
         ]
         for text, message in cases:
             with self.subTest(message=message):

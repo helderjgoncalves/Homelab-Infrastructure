@@ -16,7 +16,7 @@ Installed in the NAS crontab. Updates run at 09:00, NAS time, after the QNAP job
 | Policy | Action | Today |
 | --- | --- | --- |
 | `floating` | Pull the tag the containers run and recreate only if the image changed. With `image`, any other tag is reported and left alone. | Cloudflared, Traefik (`traefik:v3`), Uptime Kuma, Beszel and its agent, Dockge |
-| `semver` | Follows the GitHub releases. A patch is taken that morning. A new minor's `.0` waits a week; a patch of that minor during the week is taken that morning. The exact tag is pulled and retagged as the tag the containers run (`:v3`), then Compose starts it with `--pull never`. Never rolled back. `minor_wait_days = 0` takes a new minor that morning too. Another major is never taken. | Immich server and machine learning (`:v3`); AdGuard Home (`:v1`, a local tag, minors that morning) |
+| `semver` | Follows the GitHub releases. A patch is taken that morning. A new minor's `.0` waits a week; a patch of that minor during the week is taken that morning. The exact tag is pulled and retagged as the tag the containers run (`:v3`), then Compose starts it with `--pull never`. Another major is never taken. With `pin_minor = true` only patches are; a newer minor is a **Newer releases** row in the Sunday mail. Not rolled back unless `rollback = true`. | Immich server and machine learning (`:v3`, no rollback); AdGuard Home (`:v1.0`, a local tag, patches only, rolled back) |
 | `report` | Never bumped. A newer release is included once, in the Sunday mail. | Home Assistant, Zigbee2MQTT, Mosquitto, OpenCloud, Plex, QTS |
 
 `members` are the other containers of an app, such as Immich's Postgres and Valkey or OpenCloud's Collabora and Yjs. They are only named in the log.
@@ -45,7 +45,9 @@ If a recreate fails or the container does not become healthy, the previous image
 
 If restoring the previous image also fails, `state/prune.hold` is written and the weekly prune is skipped, so the previous image stays on disk. Each skipped prune is mailed the next morning as a reminder. Delete the file once the container is fixed.
 
-A `semver` app, Immich or AdGuard Home, is never rolled back, because the new version may already have migrated its database or config. A failed or unhealthy update is mailed and left as it is. For AdGuard that means LAN DNS is down until it is fixed, and the mail may not get out, since the NAS resolves through it. An unhealthy one still runs the new version, so it is also an **Updated** row in the Sunday mail. A version whose recreate failed is written to `state/rejected.tsv` and not tried again.
+Immich, a `semver` app without `rollback`, is never rolled back, because the new server may already have migrated its database. A failed or unhealthy Immich update is mailed and left as it is. An unhealthy one still runs the new version, so it is also an **Updated** row in the Sunday mail. A version whose recreate failed is written to `state/rejected.tsv` and not tried again.
+
+AdGuard Home is LAN DNS, so it has `rollback = true`, and `pin_minor = true`, because since v1.0 its minors may break things. Before the update, `rollback_files` (its `AdGuardHome.yaml`) are copied out of the container, with their owner and mode. If the new version fails to start or is not healthy, `:v1` is tagged back to the previous image, the container is created without starting, the saved config is put back over the one the new version may have migrated, and only then does it start. The failure is mailed, and the version goes to `state/rejected.tsv` like a floating image. If the config cannot be copied out, nothing is updated. Its healthcheck asks AdGuard for a name its `*.PUBLIC_ZONE` rewrite answers, on its LAN address, so healthy means DNS answers, and an update that breaks DNS is rolled back within about two minutes.
 
 ## Images
 

@@ -18,8 +18,10 @@ KEY = re.compile(r"[A-Za-z0-9_-]+")
 RELEASES = re.compile(r"github:[\w.-]+/[\w.-]+|hub:[\w.-]+/[\w.-]+|plex|qts")
 # Releases of the NAS itself, read on the host by update.sh: no containers.
 HOST = {"plex": "plex is the QNAP package", "qts": "qts is the NAS firmware"}
-FIELDS = {"title", "policy", "containers", "members", "releases", "tag_prefix", "minor_wait_days", "image", "version_file", "version_command"}
-MINOR_WAIT_DAYS = 7
+FIELDS = {
+    "title", "policy", "containers", "members", "releases", "tag_prefix", "pin_minor", "rollback", "rollback_files",
+    "image", "version_file", "version_command",
+}
 
 
 class ConfigError(ValueError):
@@ -38,7 +40,9 @@ class App:
     image: str = ""
     version_file: str = ""
     version_command: tuple[str, ...] = ()
-    minor_wait_days: int = MINOR_WAIT_DAYS
+    pin_minor: bool = False
+    rollback: bool = False
+    rollback_files: tuple[str, ...] = ()
 
     @property
     def main(self) -> str:
@@ -112,11 +116,20 @@ def _app(file: str, key: str, table) -> App:
         raise ConfigError(f"{where}.containers is empty")
     if policy == "semver" and releases.startswith("hub:"):
         raise ConfigError(f"{where}: a semver app follows GitHub releases")
-    minor_wait_days = table.get("minor_wait_days", MINOR_WAIT_DAYS)
-    if isinstance(minor_wait_days, bool) or not isinstance(minor_wait_days, int) or minor_wait_days < 0:
-        raise ConfigError(f"{where}.minor_wait_days must be a whole number of days, 0 or more")
-    if "minor_wait_days" in table and policy != "semver":
-        raise ConfigError(f"{where}.minor_wait_days is for semver apps")
+    pin_minor = table.get("pin_minor", False)
+    rollback = table.get("rollback", False)
+    for name, value in (("pin_minor", pin_minor), ("rollback", rollback)):
+        if not isinstance(value, bool):
+            raise ConfigError(f"{where}.{name} must be true or false")
+    if "pin_minor" in table and policy != "semver":
+        raise ConfigError(f"{where}.pin_minor is for semver apps")
+    if "rollback" in table and policy != "semver":
+        raise ConfigError(f"{where}.rollback is for semver apps; a floating app always rolls back")
+    rollback_files = table.get("rollback_files", [])
+    if not isinstance(rollback_files, list) or not all(isinstance(path, str) and path.startswith("/") for path in rollback_files):
+        raise ConfigError(f"{where}.rollback_files must be a list of absolute paths in the container")
+    if rollback_files and not rollback:
+        raise ConfigError(f"{where}.rollback_files needs rollback = true")
     image = normalize_image(_text(where, table, "image")).removeprefix("library/")
     if image and (policy != "floating" or len(containers) != 1):
         raise ConfigError(f"{where}.image is for a floating app with one container")
@@ -134,7 +147,7 @@ def _app(file: str, key: str, table) -> App:
         raise ConfigError(f"{where}.version_file must be an absolute path in the container")
     return App(
         key, title, policy, containers, members, releases, _text(where, table, "tag_prefix"),
-        image, version_file, tuple(command), minor_wait_days,
+        image, version_file, tuple(command), pin_minor, rollback, tuple(rollback_files),
     )
 
 

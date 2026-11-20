@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import json
 import os
 import re
 
-from config import MINOR_WAIT_DAYS, App, Config
+from config import App, Config
 from mail import Bump, Issue, Notice
 from releases import Firmware, choose, github_releases, hub_tags, latest_stable, newer, normalize_image, parse_version, plex_public, qts_public, wait_note
 from runtime import Container, Docker, DockerError, Stack, log, split_ref
@@ -40,14 +40,18 @@ class Outcome:
 def classify(config: Config, names: set[str]) -> None:
     kinds: dict[str, str] = {}
     for app in config.apps.values():
-        kind = KINDS[app.policy]
-        if app.policy == "semver" and app.minor_wait_days != MINOR_WAIT_DAYS:
-            kind = "patch or minor now, never a new major" if not app.minor_wait_days else f"patch now, a new minor waits {app.minor_wait_days} days"
-        kinds.update({name: kind for name in app.containers})
+        kinds.update({name: _kind(app) for name in app.containers})
         kinds.update({name: f"part of {app.title}" for name in app.members})
     log("running containers:")
     for name in sorted(names):
         log(f"  {name} {kinds.get(name, 'left alone')}")
+
+
+def _kind(app: App) -> str:
+    if app.policy != "semver":
+        return KINDS[app.policy]
+    kind = "patch now, a new minor is mailed" if app.pin_minor else KINDS["semver"]
+    return f"{kind}, rolled back if not healthy" if app.rollback else kind
 
 
 def run(docker: Docker, config: Config, dry: bool, rejected: set[tuple[str, str]] | frozenset = frozenset(), outcome: Outcome | None = None) -> Outcome:
@@ -153,7 +157,7 @@ def semver_plan(docker: Docker, running: set[str], app: App, unchecked: list[tup
         if unchecked is not None:
             unchecked.append((app.key, str(exc)))
         return None
-    tag, held = choose(current, releases, datetime.now(timezone.utc), timedelta(days=app.minor_wait_days))
+    tag, held = choose(current, releases, datetime.now(timezone.utc), app.pin_minor)
     return infos, current, tag, held
 
 
@@ -191,6 +195,11 @@ def update_semver(docker: Docker, config: Config, running: set[str], dry: bool, 
     targets = {info.name: (info.image_id, info.image.split("@", 1)[0]) for info in infos}
     if dry:
         return
+    try:
+        saved = {path: docker.archive(app.main, path) for path in app.rollback_files}
+    except DockerError as exc:
+        outcome.issues.append(Issue(app.key, f"{version} was not installed: {app.main} could not be backed up first. {exc}"))
+        return
     pulled = {}
     refs = {name: f"{split_ref(target)[0]}:{version}" for name, (_old, target) in targets.items()}
     try:
@@ -208,6 +217,12 @@ def update_semver(docker: Docker, config: Config, running: set[str], dry: bool, 
                 pass
         outcome.issues.append(Issue(app.key, f"Pull of {version} failed. No container was changed. {exc}"))
         return
+    bump = Bump(app.key, running_version, version.lstrip("v"), release_url(app, version))
+    if app.rollback:
+        if _semver_rollback(docker, outcome, app, stack, [info.service for info in infos], targets, pulled, saved, version):
+            log(f"{app.key} updated to {version}")
+            outcome.bumps.append(bump)
+        return
     try:
         docker.compose(stack, "up", "-d", "--pull", "never", "--no-deps", *(info.service for info in infos))
     except DockerError as exc:
@@ -218,13 +233,40 @@ def update_semver(docker: Docker, config: Config, running: set[str], dry: bool, 
         tags = ", ".join(sorted({split_ref(target)[1] for _old, target in targets.values()}))
         outcome.issues.append(Issue(app.key, f"Compose did not start the {version} images. Its files must keep the tag the containers run ({tags}). {no_rollback}"))
         return
-    bump = Bump(app.key, running_version, version.lstrip("v"), release_url(app, version))
     if not all(docker.wait_ready(name) for name in pulled):
         outcome.issues.append(Issue(app.key, f"{version} did not become healthy. {no_rollback}"))
         outcome.bumps.append(bump)
         return
     log(f"{app.key} updated to {version}")
     outcome.bumps.append(bump)
+
+
+def _semver_rollback(docker: Docker, outcome: Outcome, app: App, stack: Stack, services: list[str], targets, pulled, saved: dict[str, bytes], version: str) -> bool:
+    """Start `version`; if it does not come up healthy, start the previous images again with the saved files put back first."""
+
+    def recreate() -> None:
+        docker.compose(stack, "up", "-d", "--pull", "never", "--no-deps", *services)
+
+    def healthy() -> bool:
+        return all(_runs(docker, name, image) and docker.wait_ready(name) for name, image in pulled.items())
+
+    def restore() -> bool:
+        try:
+            for old, target in targets.values():
+                docker.tag(old, target)
+            if saved:
+                docker.compose(stack, "up", "--no-start", "--pull", "never", "--no-deps", *services)
+                for path, data in saved.items():
+                    docker.put_archive(app.main, path, data)
+                docker.compose(stack, "start", *services)
+            else:
+                recreate()
+        except DockerError as exc:
+            log(f"{app.key} restore failed: {exc}")
+            return False
+        return all(docker.wait_ready(name) and _runs(docker, name, old) for name, (old, _target) in targets.items())
+
+    return _apply(outcome, app.key, [(app.key, version)], recreate, restore, version, healthy)
 
 
 def apply_update(recreate, restore, label: str, healthy) -> tuple[str | None, bool]:
@@ -352,7 +394,8 @@ def _waiting_notice(app: App, current: str, held, notices: list[Notice]) -> None
     running_version = current.lstrip("v")
     available = held.tag.lstrip("v")
     notices.append(Notice(app.key, running_version, available, _release_page(app, held.tag)))
-    log(f"{app.key} {running_version} -> {available}, {wait_note(held, timedelta(days=app.minor_wait_days))}")
+    note = f"{held.tag} is a new minor, installed by hand" if app.pin_minor else wait_note(held)
+    log(f"{app.key} {running_version} -> {available}, {note}")
 
 
 def _bumped(docker: Docker, bumps: list[Bump], app: App, before: str) -> None:

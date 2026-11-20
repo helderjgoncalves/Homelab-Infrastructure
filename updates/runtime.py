@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import posixpath
 import socket
 import tarfile
 import time
@@ -116,10 +117,21 @@ class Docker:
             labels.get("com.docker.compose.service") or "", stack_of(labels),
         )
 
+    def archive(self, name: str, path: str) -> bytes:
+        """`path` out of a container as a tar, with its owner and mode, for put_archive."""
+        query = urllib.parse.urlencode({"path": path})
+        return self._read(f"/containers/{urllib.parse.quote(name, safe='')}/archive?{query}")
+
+    def put_archive(self, name: str, path: str, data: bytes) -> None:
+        """Put an archive() of `path` back where it came from. The container may be created and not yet started."""
+        query = urllib.parse.urlencode({"path": posixpath.dirname(path.rstrip("/")) or "/"})
+        status, reply = self._open("PUT", f"/containers/{urllib.parse.quote(name, safe='')}/archive?{query}", data, content_type="application/x-tar")
+        if status >= 300:
+            raise DockerError(last_line(reply.decode(errors="replace")) or f"could not put {path} back in {name} ({status})")
+
     def read_file(self, name: str, path: str) -> bytes:
         """One file out of a container, through the archive API. Nothing runs inside it."""
-        query = urllib.parse.urlencode({"path": path})
-        data = self._read(f"/containers/{urllib.parse.quote(name, safe='')}/archive?{query}")
+        data = self.archive(name, path)
         try:
             with tarfile.open(fileobj=io.BytesIO(data)) as archive:
                 for member in archive:
@@ -275,13 +287,13 @@ class Docker:
             self._prefix = api_prefix(json.loads(data))
         return self._prefix
 
-    def _open(self, method: str, path: str, body: bytes | None, prefix: str | None = None) -> tuple[int, bytes]:
+    def _open(self, method: str, path: str, body: bytes | None, prefix: str | None = None, content_type: str = "application/json") -> tuple[int, bytes]:
         if prefix is None:
             prefix = self._api()
         connection = _UnixConnection(self.socket_path, timeout=300)
         headers = {"Host": "localhost", "Accept": "application/json"}
         if body is not None:
-            headers["Content-Type"] = "application/json"
+            headers["Content-Type"] = content_type
         try:
             connection.request(method, prefix + path, body=body, headers=headers)
             response = connection.getresponse()

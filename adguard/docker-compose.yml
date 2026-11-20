@@ -8,11 +8,12 @@ name: adguard
 services:
   adguard:
     container_name: adguard
-    # `v1` is a local tag: updates/ pulls each v1.x.y release and tags it
-    # `v1`. AdGuard publishes no such tag, so a first deploy needs
-    # `docker pull adguard/adguardhome:v1.0.0` and
-    # `docker tag adguard/adguardhome:v1.0.0 adguard/adguardhome:v1`.
-    image: adguard/adguardhome:v1
+    # `v1.0` is a local tag: updates/ pulls each v1.0.x patch and tags it
+    # `v1.0`. AdGuard publishes no such tag, so a first deploy, or a move to
+    # a new minor by hand, needs `docker pull adguard/adguardhome:v1.0.0`,
+    # `docker tag adguard/adguardhome:v1.0.0 adguard/adguardhome:v1.0`, and
+    # this line set to that minor.
+    image: adguard/adguardhome:v1.0
     networks:
       macvlan_dns:
         ipv4_address: ${ADGUARD_IP:?set ADGUARD_IP in .env}
@@ -25,15 +26,21 @@ services:
       - ./conf:/opt/adguardhome/conf
       - ./work:/opt/adguardhome/work
     healthcheck:
-      # Assumes busybox wget. Drop this block if the container reports
-      # unhealthy while DNS works.
+      # Healthy means the UI and DNS both answer. DNS is asked on the LAN
+      # address, because allowed_clients drops 127.0.0.1, and for a name the
+      # *.PUBLIC_ZONE rewrite answers, so no upstream is needed. updates/
+      # rolls back an update that does not become healthy.
       test:
         - CMD-SHELL
-        - wget -q --tries=1 --spider http://127.0.0.1:80/ || exit 1
-      interval: 120s
-      timeout: 5s
+        - >-
+          wget -q --tries=1 --spider http://127.0.0.1:80/ &&
+          nslookup health.${PUBLIC_ZONE:?set PUBLIC_ZONE in .env} ${ADGUARD_IP} >/dev/null
+          || exit 1
+      interval: 30s
+      timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 30s
+      start_interval: 5s
     logging:
       driver: json-file
       options:

@@ -9,8 +9,8 @@
 #                    release again.
 #   title            the name in the mail
 #   policy           floating  pull the tag the containers run; roll back if not healthy
-#                    semver    a patch that morning, a new minor a week after its .0;
-#                              never rolled back, the database may have migrated
+#                    semver    a patch that morning, a new minor a week after its .0,
+#                              never another major; not rolled back unless rollback is set
 #                    report    never changed; a newer release goes in the Sunday mail
 #   containers       updated together, and only if all are running; a report
 #                    app needs only the first. The first one's version is the
@@ -20,7 +20,12 @@
 #                    official images), plex (the QNAP package, once), or qts
 #                    (the NAS firmware from QTS Live Update, once)
 #   tag_prefix       before a version, makes its release tag and image tag ("v")
-#   minor_wait_days  semver: days a new minor's .0 waits, 7 unless set; 0 takes it that morning
+#   pin_minor        semver: only patches of the running minor; a newer minor goes in
+#                    the Sunday mail and is installed by hand
+#   rollback         semver: start the previous image again if the new one is not healthy
+#   rollback_files   with rollback: files in the first container saved before the update
+#                    and put back before the previous image starts, such as a config
+#                    the new version migrates
 #   image            floating, one container: the only image:tag it may run
 #   version_file     JSON in the container whose "version" is the app's, for
 #                    images with no version label
@@ -74,7 +79,9 @@ policy = "semver"
 containers = ["adguard"]
 releases = "github:AdguardTeam/AdGuardHome"
 tag_prefix = "v"
-minor_wait_days = 0
+pin_minor = true
+rollback = true
+rollback_files = ["/opt/adguardhome/conf/AdGuardHome.yaml"]
 
 [apps.homeassistant]
 title = "Home Assistant"
