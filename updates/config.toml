@@ -30,6 +30,9 @@
 #   rollback_files   with rollback: files in the first container saved before the update
 #                    and put back before the previous image starts, such as a config
 #                    the new version migrates
+#   hold_major       floating, for images with no major tag: a pulled image whose
+#                    version label is another major is not started; it goes in
+#                    the Sunday mail and is installed by hand
 #   image            floating, one container: the only image:tag it may run
 #   version_file     JSON in the container whose "version" is the app's, for
 #                    images with no version label
@@ -116,6 +119,54 @@ title = "Homer"
 policy = "floating"
 containers = ["homer"]
 releases = "github:bastienwirtz/homer"
+tag_prefix = "v"
+
+# media-automation. linuxserver publishes no major tag, so these follow
+# latest with hold_major. Updated only while running, like every app.
+[apps.radarr]
+title = "Radarr"
+policy = "floating"
+containers = ["radarr"]
+releases = "github:Radarr/Radarr"
+tag_prefix = "v"
+hold_major = true
+
+[apps.sonarr]
+title = "Sonarr"
+policy = "floating"
+containers = ["sonarr"]
+releases = "github:Sonarr/Sonarr"
+tag_prefix = "v"
+hold_major = true
+
+[apps.prowlarr]
+title = "Prowlarr"
+policy = "floating"
+containers = ["prowlarr"]
+releases = "github:Prowlarr/Prowlarr"
+tag_prefix = "v"
+hold_major = true
+
+[apps.qbittorrent]
+title = "qBittorrent"
+policy = "floating"
+containers = ["qbittorrent"]
+releases = "hub:linuxserver/qbittorrent"
+hold_major = true
+
+[apps.maintainerr]
+title = "Maintainerr"
+policy = "floating"
+containers = ["maintainerr"]
+releases = "github:Maintainerr/Maintainerr"
+tag_prefix = "v"
+version_file = "/opt/app/apps/server/package.json"
+
+[apps.seerr]
+title = "Seerr"
+policy = "floating"
+containers = ["seerr"]
+releases = "github:seerr-team/seerr"
 tag_prefix = "v"
 
 [apps.plex]

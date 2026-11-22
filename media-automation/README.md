@@ -13,6 +13,12 @@ Radarr/Sonarr → qBittorrent → hardlink into the Plex library.
 | Seerr | `5055` | Request portal: pick TV seasons; local logins for managed users |
 
 All services share the `media` network and reach each other by container name.
+
+[`updates/`](../updates/) updates each service every morning while it runs and
+rolls one back if it is not healthy; a stopped stack is left alone. A new major
+is never installed: it is in the Sunday mail. Maintainerr and Seerr follow their
+major tags (`3`, `v3`); the linuxserver images have none, so they follow
+`latest` and the updater holds a pulled image of another major.
 Plex runs natively on the NAS and picks up new files by watching its folders.
 
 ## Storage

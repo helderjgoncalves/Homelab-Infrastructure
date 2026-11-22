@@ -106,6 +106,9 @@ class FakeDocker:
             raise DockerError(f"no such image {ref}")
         return self.images[ref]
 
+    def image_version(self, ref: str) -> str:
+        return self.versions.get(self.image_id(ref), "")
+
     def pull(self, ref: str) -> None:
         self.calls.append(("pull", ref))
         if ref not in self.remote:
@@ -669,6 +672,61 @@ class OutsideTests(unittest.TestCase):
             self.assertEqual([tag.tag for tag in releases.hub_tags("library/eclipse-mosquitto")], ["2.1.4", "2.2.0"])
 
 
+class HoldMajorTests(unittest.TestCase):
+    """linuxserver images follow latest; a pulled image of another major is mailed, not started."""
+
+    IMAGE = "lscr.io/linuxserver/radarr:latest"
+
+    def radarr(self, new_label: str) -> FakeDocker:
+        return FakeDocker(
+            {"radarr": Box(self.IMAGE, "old", "media-automation", "radarr")},
+            {self.IMAGE: "new"},
+            {"old": "6.4.4.10685-ls325", "new": new_label},
+        )
+
+    def test_a_new_major_is_mailed_and_the_old_image_keeps_the_tag(self):
+        docker = self.radarr("7.0.3.10918-ls330")
+        outcome = Outcome()
+        bump(docker, "radarr", outcome)
+        self.assertFalse([call for call in docker.calls if call[:3] == ("compose", "media-automation", "up")])
+        self.assertEqual((docker.boxes["radarr"].image_id, docker.images[self.IMAGE]), ("old", "old"))
+        self.assertEqual(outcome.notices, [Notice("radarr", "6.4.4.10685", "7.0.3.10918", "https://github.com/Radarr/Radarr/releases/tag/v7.0.3.10918")])
+        self.assertEqual((outcome.bumps, outcome.issues, outcome.rejected), ([], [], []))
+
+    def test_the_same_major_is_installed(self):
+        docker = self.radarr("6.5.0.10700-ls326")
+        outcome = Outcome()
+        bump(docker, "radarr", outcome)
+        self.assertEqual(docker.boxes["radarr"].image_id, "new")
+        self.assertEqual([(item.before, item.after) for item in outcome.bumps], [("6.4.4.10685-ls325", "6.5.0.10700-ls326")])
+        self.assertEqual(outcome.notices, [])
+
+    def test_a_new_image_with_no_readable_version_is_not_installed(self):
+        docker = self.radarr("")
+        outcome = Outcome()
+        bump(docker, "radarr", outcome)
+        self.assertEqual((docker.boxes["radarr"].image_id, docker.images[self.IMAGE]), ("old", "old"))
+        self.assertIn("could not be compared", outcome.issues[0].detail)
+
+    def test_qbittorrent_reads_its_own_version_from_the_label(self):
+        image = "lscr.io/linuxserver/qbittorrent:latest"
+        docker = FakeDocker(
+            {"qbittorrent": Box(image, "old", "media-automation", "qbittorrent")},
+            {image: "new"},
+            {"old": "5.3.0_v2.1.2-ls486", "new": "6.0.1_v2.1.3-ls500"},
+        )
+        outcome = Outcome()
+        bump(docker, "qbittorrent", outcome)
+        self.assertEqual(outcome.notices, [Notice("qbittorrent", "5.3.0", "6.0.1", "https://hub.docker.com/r/linuxserver/qbittorrent/tags")])
+
+    def test_a_stopped_stack_is_left_alone(self):
+        docker = self.radarr("6.5.0.10700-ls326")
+        outcome = Outcome()
+        bump(docker, "radarr", outcome, running=set())
+        self.assertEqual(docker.calls, [])
+        self.assertEqual((outcome.bumps, outcome.notices, outcome.issues), ([], [], []))
+
+
 class StateTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
@@ -1125,15 +1183,19 @@ class SameAsBeforeConfigTests(unittest.TestCase):
     IMMEDIATE = {
         "traefik", "cloudflare-tunnel", "beszel", "beszel-agent", "uptime-kuma", "dockge",
         "homeassistant", "zigbee2mqtt", "mosquitto", "homer",
+        "radarr", "sonarr", "prowlarr", "qbittorrent", "maintainerr", "seerr",
     }
+    HOLD_MAJOR = {"radarr", "sonarr", "prowlarr", "qbittorrent"}
     IMMICH = ("immich_server", "immich_machine_learning")
-    APP_VERSION = {"uptime-kuma": "/app/package.json", "dockge": "/app/package.json"}
+    APP_VERSION = {"uptime-kuma": "/app/package.json", "dockge": "/app/package.json", "maintainerr": "/opt/app/apps/server/package.json"}
     VERSION_COMMAND = {"cloudflare-tunnel": ("cloudflared", "--version")}
     TITLES = {
         "adguard": "AdGuard Home", "homeassistant": "Home Assistant", "zigbee2mqtt": "Zigbee2MQTT",
         "mosquitto": "Mosquitto", "opencloud-opencloud-1": "OpenCloud", "traefik": "Traefik",
         "cloudflare-tunnel": "Cloudflared", "beszel": "Beszel", "uptime-kuma": "Uptime Kuma",
         "dockge": "Dockge", "immich": "Immich", "plex": "Plex", "qts": "QTS", "homer": "Homer",
+        "radarr": "Radarr", "sonarr": "Sonarr", "prowlarr": "Prowlarr", "qbittorrent": "qBittorrent",
+        "maintainerr": "Maintainerr", "seerr": "Seerr",
     }
     RELEASES = {
         "traefik": ("https://github.com/traefik/traefik/releases", True),
@@ -1165,6 +1227,7 @@ class SameAsBeforeConfigTests(unittest.TestCase):
         self.assertEqual({key: app.image or None for key, app in floating.items() if key in self.FLOATING}, self.FLOATING)
         self.assertEqual(APPS["beszel"].containers, ("beszel", "beszel-agent"))
         self.assertEqual(CONFIG.compose_container, "dockge")
+        self.assertEqual({key for key, app in APPS.items() if app.hold_major}, self.HOLD_MAJOR)
 
     def test_immich_and_adguard_are_the_semver_apps(self):
         self.assertEqual(list(self.by_policy("semver")), ["immich", "adguard"])
@@ -1205,7 +1268,8 @@ class SameAsBeforeConfigTests(unittest.TestCase):
             run(FakeDocker({}), CONFIG, False)
         self.assertEqual(order, [
             "immich", "cloudflare-tunnel", "traefik", "uptime-kuma", "beszel", "adguard",
-            "homeassistant", "zigbee2mqtt", "mosquitto", "homer", "pinned", "outside", "dockge",
+            "homeassistant", "zigbee2mqtt", "mosquitto", "homer",
+            "radarr", "sonarr", "prowlarr", "qbittorrent", "maintainerr", "seerr", "pinned", "outside", "dockge",
         ])
 
 
@@ -1280,6 +1344,8 @@ containers = ["dockge"]
             (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nrollback = "yes"\n', "rollback must be true or false"),
             (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nrollback_files = ["/a"]\n', "needs rollback = true"),
             (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nrollback = true\nrollback_files = ["a"]\n', "absolute paths"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nhold_major = "yes"\n', "hold_major must be true or false"),
+            (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nhold_major = true\n', "hold_major is for floating apps"),
         ]
         for text, message in cases:
             with self.subTest(message=message):

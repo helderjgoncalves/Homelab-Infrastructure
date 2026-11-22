@@ -17,6 +17,10 @@
 # App configs live in ./appdata (SSD, gitignored). qBittorrent's pre-existing
 # library mounts (/downloads, /movies, /tv, /music) live in the gitignored
 # docker-compose.override.yml so torrents added before /data keep seeding.
+#
+# updates/ pulls each running service every morning. The linuxserver images
+# publish no major tag, so they follow latest and updates/ holds a pulled
+# image of another major (hold_major in updates/config.toml).
 
 name: media-automation
 services:
@@ -200,7 +204,8 @@ services:
     logging: *logging
 
   maintainerr:
-    image: ghcr.io/maintainerr/maintainerr:latest
+    # updates/ takes v3 minors and patches; a new major is mailed.
+    image: ghcr.io/maintainerr/maintainerr:3
     container_name: maintainerr
     restart: unless-stopped
     # The image runs as a fixed UID; match the stack's 1000:100 so
@@ -229,7 +234,8 @@ services:
     logging: *logging
 
   seerr:
-    image: ghcr.io/seerr-team/seerr:latest
+    # updates/ takes v3 minors and patches; a new major is mailed.
+    image: ghcr.io/seerr-team/seerr:v3
     container_name: seerr
     restart: unless-stopped
     # Runs as the image's `node` user (UID 1000); ./appdata/seerr must be

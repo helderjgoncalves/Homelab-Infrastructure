@@ -20,7 +20,7 @@ RELEASES = re.compile(r"github:[\w.-]+/[\w.-]+|hub:[\w.-]+/[\w.-]+|plex|qts")
 HOST = {"plex": "plex is the QNAP package", "qts": "qts is the NAS firmware"}
 FIELDS = {
     "title", "policy", "containers", "members", "releases", "tag_prefix", "pin_minor", "rollback", "rollback_files",
-    "image", "version_file", "version_command",
+    "image", "version_file", "version_command", "hold_major",
 }
 
 
@@ -43,6 +43,7 @@ class App:
     pin_minor: bool = False
     rollback: bool = False
     rollback_files: tuple[str, ...] = ()
+    hold_major: bool = False
 
     @property
     def main(self) -> str:
@@ -118,11 +119,14 @@ def _app(file: str, key: str, table) -> App:
         raise ConfigError(f"{where}: a semver app follows GitHub releases")
     pin_minor = table.get("pin_minor", False)
     rollback = table.get("rollback", False)
-    for name, value in (("pin_minor", pin_minor), ("rollback", rollback)):
+    hold_major = table.get("hold_major", False)
+    for name, value in (("pin_minor", pin_minor), ("rollback", rollback), ("hold_major", hold_major)):
         if not isinstance(value, bool):
             raise ConfigError(f"{where}.{name} must be true or false")
     if "pin_minor" in table and policy != "semver":
         raise ConfigError(f"{where}.pin_minor is for semver apps")
+    if "hold_major" in table and policy != "floating":
+        raise ConfigError(f"{where}.hold_major is for floating apps; a semver app never takes another major")
     if "rollback" in table and policy != "semver":
         raise ConfigError(f"{where}.rollback is for semver apps; a floating app always rolls back")
     rollback_files = table.get("rollback_files", [])
@@ -147,7 +151,7 @@ def _app(file: str, key: str, table) -> App:
         raise ConfigError(f"{where}.version_file must be an absolute path in the container")
     return App(
         key, title, policy, containers, members, releases, _text(where, table, "tag_prefix"),
-        image, version_file, tuple(command), pin_minor, rollback, tuple(rollback_files),
+        image, version_file, tuple(command), pin_minor, rollback, tuple(rollback_files), hold_major,
     )
 
 

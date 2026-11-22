@@ -19,6 +19,7 @@ KINDS = {
     "semver": "patch now, a new minor waits a week",
     "report": "pinned, email if a newer release exists",
 }
+LEADING_VERSION = re.compile(r"v?(\d+(?:\.\d+)*)")
 TAG_LINE = re.compile(r"v?(\d+(?:\.\d+)*)(-[A-Za-z][\w.-]*)?")
 HOLD_NOTE = "Unused images are kept until updates/state/prune.hold is deleted."
 PLEX_DOWNLOADS = "https://www.plex.tv/media-server-downloads/"
@@ -49,6 +50,8 @@ def classify(config: Config, names: set[str]) -> None:
 
 
 def _kind(app: App) -> str:
+    if app.policy == "floating" and app.hold_major:
+        return f"{KINDS['floating']}, a new major is mailed"
     if app.policy != "semver":
         return KINDS[app.policy]
     kind = "patch now, a new minor is mailed" if app.pin_minor else KINDS["semver"]
@@ -113,6 +116,10 @@ def update_floating(docker: Docker, config: Config, running: set[str], dry: bool
     candidates = [(info.name, new) for info, new in zip(infos, new_ids) if new != info.image_id]
     if any(item in rejected for item in candidates):
         log(f"{app.key}: this image was rolled back before, waiting for a newer one")
+        for info, ref in zip(infos, refs):
+            docker.tag(info.image_id, ref)
+        return
+    if app.hold_major and _holds_major(docker, outcome, app, infos[0], refs[0]):
         for info, ref in zip(infos, refs):
             docker.tag(info.image_id, ref)
         return
@@ -369,6 +376,25 @@ def _outside_notice(docker: Docker, notices: list[Notice], app: App) -> None:
     running_version, available = (".".join(str(part) for part in version) for version in (current, found.version))
     notices.append(Notice(app.key, running_version, available, _release_page(app, found.tag)))
     log(f"{app.title} {running_version} -> {available} is past :{tag}, installed by hand (email)")
+
+
+def _holds_major(docker: Docker, outcome: Outcome, app: App, info: Container, ref: str) -> bool:
+    """True when the pulled image is another major, or its version can't be read: it is mailed, not installed."""
+    before, after = (_leading_version(text) for text in (info.version, docker.image_version(ref)))
+    if not before or not after:
+        outcome.issues.append(Issue(app.key, f"The version of the new {ref} could not be compared with the running one, so it was not installed."))
+        return True
+    if before.split(".")[0] == after.split(".")[0]:
+        return False
+    outcome.notices.append(Notice(app.key, before, after, release_url(app, after)))
+    log(f"{app.title} {before} -> {after} is a new major, installed by hand (email)")
+    return True
+
+
+def _leading_version(label: str) -> str:
+    """The version a label starts with: 6.4.4.10685 from linuxserver's 6.4.4.10685-ls325."""
+    match = LEADING_VERSION.match(label.strip())
+    return match.group(1) if match else ""
 
 
 def _all_running(app: App, running: set[str]) -> bool:

@@ -146,6 +146,11 @@ class Docker:
         payload = self._request("GET", f"/images/{urllib.parse.quote(ref, safe='')}/json")
         return payload["Id"]
 
+    def image_version(self, ref: str) -> str:
+        """The version label of a local image, before any container runs it. Empty when it has none."""
+        payload = self._request("GET", f"/images/{urllib.parse.quote(ref, safe='')}/json")
+        return ((payload.get("Config") or {}).get("Labels") or {}).get("org.opencontainers.image.version") or ""
+
     def pull(self, ref: str) -> None:
         retry_rate_limit(f"pull of {ref}", lambda: self._pull(ref))
 
