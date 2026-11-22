@@ -21,7 +21,7 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`homer/`](./homer/) | Static start page / service launcher | nginx + YAML (`assets/config.yml`); ~10–20 MB RAM, loopback `:8085` |
 | [`immich/`](./immich/) | Photo/video library + phone backup | Intel iGPU passthrough (`/dev/dri`); CPU machine-learning image |
 | [`media-automation/`](./media-automation/) | Media library automation — indexing, requests, fetching and retention | Single `DATA_DIR` mount for hardlinks; WebUIs on loopback; legacy download-client mounts in the gitignored override |
-| [`music/`](./music/) | Music library tools (not a stack) | `flac2aac.sh` converts lossless audio to Apple AAC in place; runs on a Mac against the share, needs Homebrew `ffmpeg` with `aac_at` |
+| [`music/`](./music/) | Music library tools (not a stack) | `flac2aac.sh` converts lossless audio to Apple AAC in place; runs on a Mac against the share, needs Homebrew `ffmpeg` with `aac_at`. `yt-audio.sh` saves the original audio stream of a YouTube link, tagged, without re-encoding |
 | [`nas-host/`](./nas-host/) | Host plumbing for the DNS container (not a stack) | macvlan network, shim, `/etc/resolv.conf` and the QTS boot hook; `bootstrap.sh` once per host |
 | [`ntfy/`](./ntfy/) | Push notification server | Alert sink for Kuma + Beszel; iOS via the ntfy.sh upstream relay |
 | [`opencloud/`](./opencloud/) | File sync + collaboration suite | OpenCloud + Collabora + Keycloak + LDAP behind Traefik |
