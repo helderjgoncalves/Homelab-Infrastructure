@@ -1413,6 +1413,18 @@ class ComposeLabelTests(unittest.TestCase):
         self.assertEqual(info.service, "immich-server")
         self.assertEqual(info.stack, stack_of(self.LABELS))
 
+    def test_image_version_reads_the_image_label(self):
+        from runtime import Docker
+
+        docker = Docker()
+        payload = {"Id": "sha256:new", "Config": {"Labels": {"org.opencontainers.image.version": "7.0.3.10918-ls330", "build_version": "x"}}}
+        with mock.patch.object(docker, "_request", return_value=payload) as request:
+            self.assertEqual(docker.image_version("lscr.io/linuxserver/radarr:latest"), "7.0.3.10918-ls330")
+        self.assertEqual(request.call_args.args, ("GET", "/images/lscr.io%2Flinuxserver%2Fradarr%3Alatest/json"))
+        for bare in ({"Id": "sha256:x", "Config": {"Labels": None}}, {"Id": "sha256:x", "Config": {}}, {"Id": "sha256:x"}):
+            with mock.patch.object(docker, "_request", return_value=bare):
+                self.assertEqual(docker.image_version("x:1"), "")
+
     def test_compose_passes_every_file(self):
         from runtime import Docker
 
