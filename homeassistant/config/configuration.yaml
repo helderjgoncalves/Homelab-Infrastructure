@@ -12,3 +12,12 @@ scene: !include scenes.yaml
 # No http: block. Since 2026.10 HA's HTTP settings (bind address, trusted
 # proxies) live in the UI under Settings > System > Network, stored in
 # .storage/http; see ../README.md for the required values.
+
+# Every curtain that should close one hour after sunset.
+# Add the new cover entity here; the automation targets the group only.
+cover:
+  - platform: group
+    name: Cortinas
+    unique_id: cortinas
+    entities:
+      - cover.estore_quarto_1

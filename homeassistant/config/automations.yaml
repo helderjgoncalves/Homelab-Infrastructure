@@ -85,3 +85,31 @@
       entity_id: switch.tripla_quarto_1
     data: {}
   mode: single
+
+- id: close_curtains_one_hour_after_sunset
+  alias: Fechar cortinas uma hora após o pôr do sol
+  description: Fecha o grupo cover.cortinas. Para uma cortina nova, acrescenta a entidade à lista cover.cortinas em configuration.yaml.
+  triggers:
+  - trigger: sun
+    event: sunset
+    offset: "01:00:00"
+  conditions: []
+  actions:
+  - action: cover.close_cover
+    target:
+      entity_id: cover.cortinas
+  mode: single
+
+- id: close_curtains_at_2230
+  alias: Fechar cortinas às 22:30
+  description: Desligada. Fecha cover.cortinas às 22:30. Liga esta automação quando a quiseres usar.
+  initial_state: false
+  triggers:
+  - trigger: time
+    at: "22:30:00"
+  conditions: []
+  actions:
+  - action: cover.close_cover
+    target:
+      entity_id: cover.cortinas
+  mode: single
