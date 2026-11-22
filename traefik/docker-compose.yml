@@ -1,9 +1,10 @@
 name: traefik
 services:
   traefik:
-    # Every request goes through Traefik, so updates/ takes v3.7 patches only.
-    # A new minor is mailed; move this tag to it by hand.
-    image: traefik:v3.7
+    # updates/ takes v3 minors and patches; a new major is mailed. Not pinned
+    # to a minor: Traefik's behaviour changes (path and matcher hardening)
+    # ship in patches as often as in minors, so a minor tag would not avoid them.
+    image: traefik:v3
     container_name: traefik
     restart: unless-stopped
     # Every stack binds its UI to 127.0.0.1, so the proxy
