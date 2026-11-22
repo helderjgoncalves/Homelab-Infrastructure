@@ -4,7 +4,7 @@ Home automation, as the Home Assistant Container install: no Supervisor, so no a
 
 - Host networking for device discovery (mDNS, SSDP, HomeKit, Cast). HTTP is bound to `127.0.0.1:8123`, so the only way in is Traefik: `home.hgoncalves.uk`, `private` (LAN + the owner's Tailscale devices). Not on the Cloudflare tunnel.
 - That binding is not in Git. Since 2026.10 HA keeps its HTTP settings in the UI (Settings → System → Network), stored in `config/.storage/http`; a backup or snapshot restores it. On a fresh install, set them before anything else: listen on `127.0.0.1` only, trust `X-Forwarded-For` from proxy `127.0.0.1/32` (Traefik is on the host network too), and ban after 5 failed logins. Check with `netstat -tln | grep 8123` on the NAS: it must show `127.0.0.1:8123`, not `0.0.0.0:8123`.
-- Image pinned by tag and digest. To upgrade, read the release's breaking changes, take a backup (below), bump both in `docker-compose.yml`, redeploy.
+- Image on the month's tag (`2026.11`). [`updates/`](../updates/) takes its patches each morning and rolls one back if it is not healthy. A new month is a **Newer releases** row in the Sunday mail: read its breaking changes, take a backup (below), move the tag in `docker-compose.yml`, redeploy.
 - Git tracks only `configuration.yaml`, `automations.yaml`, `scripts.yaml` and `scenes.yaml`. Everything else in `config/` is runtime state: `.storage/` holds auth tokens and integration credentials. The last three are rewritten by the UI, so yamllint skips them.
 
 ```

@@ -42,22 +42,28 @@ def _pad(version: tuple[int, ...], size: int) -> tuple[int, ...]:
 
 
 def choose(current: str, releases: list[Release], now: datetime, pin_minor: bool = False) -> tuple[str | None, Release | None]:
-    """Return (tag to install, newer minor that is not installed).
+    """Return (tag to install, newer release that is not installed).
 
     A x.y.0 release is eligible a week after it was published. Any patch,
     including a patch of a newer minor, is eligible immediately. With
     `pin_minor`, only patches of the running minor are; the newest other
-    minor is returned as not installed. Other majors are ignored.
+    minor is returned as not installed. A newer major is never installed; it
+    is returned when no minor is.
     """
     current_version = parse_version(current)
     if current_version is None:
         return None, None
     best: Release | None = None
     waiting: Release | None = None
+    major: Release | None = None
     for release in releases:
         if release.prerelease or release.draft or not release.version:
             continue
-        if release.version[0] != current_version[0] or not newer(release.version, current_version):
+        if not newer(release.version, current_version):
+            continue
+        if release.version[0] != current_version[0]:
+            if release.version[0] > current_version[0] and (major is None or newer(release.version, major.version)):
+                major = release
             continue
         if pin_minor and _minor(release.version) != _minor(current_version):
             if waiting is None or newer(release.version, waiting.version):
@@ -70,7 +76,7 @@ def choose(current: str, releases: list[Release], now: datetime, pin_minor: bool
             waiting = release
     if waiting is not None and best is not None and waiting.version[1] <= best.version[1]:
         waiting = None
-    return (best.tag if best else None), waiting
+    return (best.tag if best else None), waiting or major
 
 
 def _eligible(current: tuple[int, ...], release: Release, now: datetime) -> bool:
@@ -128,12 +134,16 @@ def github_releases(repo: str) -> list[Release]:
     return releases
 
 
-def hub_tags(repository: str) -> list[Release]:
+def hub_tags(repository: str, suffix: str = "") -> list[Release]:
+    """Tags that are versions. With `suffix`, such as `-alpine`, only tags of that variant, read without it."""
     releases: list[Release] = []
     for page in (1, 2, 3):
         payload = _get_json(f"https://hub.docker.com/v2/repositories/{repository}/tags?page_size=100&page={page}")
         for item in payload.get("results", []):
-            version = parse_version(item.get("name", ""))
+            name = item.get("name", "")
+            if suffix and not name.endswith(suffix):
+                continue
+            version = parse_version(name.removesuffix(suffix) if suffix else name)
             if version is None:
                 continue
             published = item.get("last_updated")

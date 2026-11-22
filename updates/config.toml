@@ -8,9 +8,13 @@
 #                    and its lines in state/: a renamed key mails its pending
 #                    release again.
 #   title            the name in the mail
-#   policy           floating  pull the tag the containers run; roll back if not healthy
+#   policy           floating  pull the tag the containers run; roll back if not healthy.
+#                              The tag sets how far it moves: `v3.7` patches only,
+#                              `2` minors too, `latest` everything. A newer release
+#                              past the tag goes in the Sunday mail.
 #                    semver    a patch that morning, a new minor a week after its .0,
-#                              never another major; not rolled back unless rollback is set
+#                              never another major (mailed instead); not rolled back
+#                              unless rollback is set
 #                    report    never changed; a newer release goes in the Sunday mail
 #   containers       updated together, and only if all are running; a report
 #                    app needs only the first. The first one's version is the
@@ -55,7 +59,6 @@ version_command = ["cloudflared", "--version"]
 title = "Traefik"
 policy = "floating"
 containers = ["traefik"]
-image = "traefik:v3"
 releases = "github:traefik/traefik"
 tag_prefix = "v"
 
@@ -85,13 +88,13 @@ rollback_files = ["/opt/adguardhome/conf/AdGuardHome.yaml"]
 
 [apps.homeassistant]
 title = "Home Assistant"
-policy = "report"
+policy = "floating"
 containers = ["homeassistant"]
 releases = "github:home-assistant/core"
 
 [apps.zigbee2mqtt]
 title = "Zigbee2MQTT"
-policy = "report"
+policy = "floating"
 containers = ["zigbee2mqtt"]
 releases = "github:Koenkk/zigbee2mqtt"
 
@@ -104,9 +107,16 @@ releases = "github:opencloud-eu/opencloud"
 
 [apps.mosquitto]
 title = "Mosquitto"
-policy = "report"
+policy = "floating"
 containers = ["mosquitto"]
 releases = "hub:library/eclipse-mosquitto"
+
+[apps.homer]
+title = "Homer"
+policy = "floating"
+containers = ["homer"]
+releases = "github:bastienwirtz/homer"
+tag_prefix = "v"
 
 [apps.plex]
 title = "Plex"

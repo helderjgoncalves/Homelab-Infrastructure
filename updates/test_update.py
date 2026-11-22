@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -180,10 +180,17 @@ class ChooseTests(unittest.TestCase):
         tag, _waiting = choose("v3.4.1", [release("v3.5.0", 1), release("v3.5.1", 0)], NOW)
         self.assertEqual(tag, "v3.5.1")
 
-    def test_other_majors_and_prereleases_are_ignored(self):
-        tag, waiting = choose("v3.7.18", [release("v4.0.0", 30), release("v3.8.0", 1, prerelease=True)], NOW)
+    def test_a_newer_major_is_held_and_prereleases_are_ignored(self):
+        tag, waiting = choose("v3.7.18", [release("v4.0.0", 30), release("v4.1.0", 2), release("v3.8.0", 1, prerelease=True)], NOW)
         self.assertIsNone(tag)
-        self.assertIsNone(waiting)
+        self.assertEqual(waiting.tag, "v4.1.0")
+        self.assertEqual(choose("v3.7.18", [release("v2.9.0", 1)], NOW), (None, None))
+
+    def test_a_waiting_minor_is_named_before_a_new_major(self):
+        tag, waiting = choose("v3.4.1", [release("v3.4.2", 0), release("v3.5.0", 1), release("v4.0.0", 0)], NOW)
+        self.assertEqual((tag, waiting.tag), ("v3.4.2", "v3.5.0"))
+        tag, waiting = choose("v3.4.1", [release("v3.5.0", 8), release("v4.0.0", 0)], NOW)
+        self.assertEqual((tag, waiting.tag), ("v3.5.0", "v4.0.0"))
 
     def test_a_pinned_minor_takes_patches_and_holds_back_any_newer_minor(self):
         releases = [release("v1.0.1", 0), release("v1.1.0", 30), release("v1.1.2", 9), release("v2.0.0", 0), release("v1.2.0", 0, prerelease=True)]
@@ -245,10 +252,10 @@ class RollbackTests(unittest.TestCase):
         self.assertIn("Restoring the previous image failed", outcome.issues[0].detail)
         self.assertIn(HOLD_NOTE, outcome.issues[0].detail)
 
-    def test_traefik_stays_on_v3(self):
+    def test_image_keeps_an_app_on_its_tag(self):
         docker = traefik(image="traefik:v4")
         outcome = Outcome()
-        bump_traefik(docker, outcome)
+        update_floating(docker, CONFIG, {"traefik"}, False, outcome, frozenset(), replace(APPS["traefik"], image="traefik:v3"))
         self.assertEqual(docker.calls, [])
         self.assertIn("not traefik:v3", outcome.issues[0].detail)
 
@@ -447,11 +454,12 @@ class AdGuardTests(unittest.TestCase):
         self.assertEqual(outcome.notices, [Notice("adguard", "1.0.0", "1.1.0", "https://github.com/AdguardTeam/AdGuardHome/releases/tag/v1.1.0")])
         self.assertEqual((outcome.bumps, outcome.issues), ([], []))
 
-    def test_a_new_major_alone_is_not_taken_or_mailed(self):
+    def test_a_new_major_alone_is_only_mailed(self):
         self.releases = self.releases[2:]
         outcome = self.update()
         self.assertEqual(self.docker.calls, [])
-        self.assertEqual((outcome.bumps, outcome.notices, outcome.issues), ([], [], []))
+        self.assertEqual(outcome.notices, [Notice("adguard", "1.0.0", "2.0.0", "https://github.com/AdguardTeam/AdGuardHome/releases/tag/v2.0.0")])
+        self.assertEqual((outcome.bumps, outcome.issues), ([], []))
 
     def test_an_unhealthy_update_is_rolled_back_with_its_config_put_back_first(self):
         self.docker.unhealthy = {"ag-new"}
@@ -551,9 +559,13 @@ class PullRetryTests(unittest.TestCase):
 
 class RunTests(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch.dict(os.environ, {"PLEX_VERSION": "", "QTS_VERSION": ""})
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for patcher in (
+            mock.patch.dict(os.environ, {"PLEX_VERSION": "", "QTS_VERSION": ""}),
+            mock.patch.object(jobs, "github_releases", return_value=[]),
+            mock.patch.object(jobs, "hub_tags", return_value=[]),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def test_an_error_in_one_step_keeps_the_others(self):
         docker = FakeDocker({
@@ -585,14 +597,76 @@ class RunTests(unittest.TestCase):
 
     def test_a_failed_release_check_is_recorded_for_the_main_container(self):
         docker = FakeDocker({
-            "zigbee2mqtt": Box("koenkk/zigbee2mqtt:2.14.3", "z2m", "zigbee2mqtt", "zigbee2mqtt"),
+            "opencloud-opencloud-1": Box("opencloudeu/opencloud:9.2.0", "oc", "opencloud", "opencloud"),
             "opencloud-collabora-1": Box("collabora/code:25.04.1.1", "co", "opencloud", "collabora"),
-        })
+            "mosquitto": Box("eclipse-mosquitto:2.1-alpine", "mq", "zigbee2mqtt", "mosquitto"),
+        }, versions={"mq": "2.1.4"})
         with mock.patch.object(jobs, "github_releases", side_effect=OSError("rate limited")), \
                 mock.patch.object(jobs, "hub_tags", side_effect=OSError("hub down")):
             outcome = run(docker, CONFIG, False)
-        self.assertEqual(outcome.unchecked, [("zigbee2mqtt", "rate limited")])
+        self.assertEqual(outcome.unchecked, [("opencloud-opencloud-1", "rate limited"), ("mosquitto", "hub down")])
         self.assertEqual(outcome.issues, [])
+
+
+class OutsideTests(unittest.TestCase):
+    """A floating app's release that its tag will never bring is mailed."""
+
+    def notices(self, docker: FakeDocker, github=(), hub=()) -> list[Notice]:
+        notices: list[Notice] = []
+        with mock.patch.object(jobs, "github_releases", return_value=list(github)) as self.github, \
+                mock.patch.object(jobs, "hub_tags", return_value=list(hub)) as self.hub:
+            jobs.collect_outside(docker, CONFIG, set(docker.boxes), notices)
+        return notices
+
+    def test_the_tag_line(self):
+        self.assertEqual(jobs.tag_line("v3.7"), ((3, 7), ""))
+        self.assertEqual(jobs.tag_line("2026.11"), ((2026, 11), ""))
+        self.assertEqual(jobs.tag_line("2.1-alpine"), ((2, 1), "-alpine"))
+        self.assertEqual(jobs.tag_line("0"), ((0,), ""))
+        self.assertIsNone(jobs.tag_line("latest"))
+        self.assertIsNone(jobs.tag_line("stable-alpine"))
+
+    def test_a_new_minor_past_a_minor_tag_is_mailed(self):
+        docker = FakeDocker({"traefik": Box("traefik:v3.7", "t", "traefik", "traefik")}, versions={"t": "v3.7.19"})
+        notices = self.notices(docker, [release("v3.7.20", 0), release("v3.8.1", 3), release("v4.0.0", 0, prerelease=True)])
+        self.assertEqual(notices, [Notice("traefik", "3.7.19", "3.8.1", "https://github.com/traefik/traefik/releases/tag/v3.8.1")])
+
+    def test_a_patch_on_the_tag_is_not_mailed(self):
+        docker = FakeDocker({"traefik": Box("traefik:v3.7", "t", "traefik", "traefik")}, versions={"t": "v3.7.19"})
+        self.assertEqual(self.notices(docker, [release("v3.7.20", 0)]), [])
+
+    def test_a_new_major_past_a_major_tag_is_mailed(self):
+        docker = FakeDocker({"uptime-kuma": Box("louislam/uptime-kuma:2", "k", "uptime-kuma", "uptime-kuma")}, versions={"k": ""})
+        docker.files[("uptime-kuma", "k")] = b'{"version": "2.5.9"}'
+        self.assertEqual(self.notices(docker, [release("2.6.0", 0)]), [])
+        self.assertEqual(
+            self.notices(docker, [release("2.6.0", 0), release("3.0.0", 0)]),
+            [Notice("uptime-kuma", "2.5.9", "3.0.0", "https://github.com/louislam/uptime-kuma/releases/tag/3.0.0")],
+        )
+
+    def test_latest_is_not_checked(self):
+        docker = FakeDocker({"homer": Box("b4bz/homer:latest", "h", "homer", "homer")}, versions={"h": "v26.11.2"})
+        self.assertEqual(self.notices(docker, [release("v26.11.4", 0)]), [])
+        self.github.assert_not_called()
+
+    def test_a_variant_tag_reads_releases_of_that_variant(self):
+        docker = FakeDocker({"mosquitto": Box("eclipse-mosquitto:2.1-alpine", "mq", "zigbee2mqtt", "mosquitto")}, versions={"mq": "2.1.4"})
+        notices = self.notices(docker, hub=[release("2.1.5", 0), release("2.2.0", 0)])
+        self.hub.assert_called_once_with("library/eclipse-mosquitto", "-alpine")
+        self.assertEqual(notices, [Notice("mosquitto", "2.1.4", "2.2.0", "https://hub.docker.com/_/eclipse-mosquitto/tags")])
+
+    def test_a_digest_pinned_tag_is_read_without_the_digest(self):
+        docker = FakeDocker({"zigbee2mqtt": Box("ghcr.io/koenkk/zigbee2mqtt:2.14@sha256:00", "z", "zigbee2mqtt", "zigbee2mqtt")}, versions={"z": "2.14.3"})
+        self.assertEqual([notice.available for notice in self.notices(docker, [release("2.15.0", 0)])], ["2.15.0"])
+
+    def test_hub_tags_keep_only_the_variant(self):
+        import releases
+
+        names = ["2.1.4-alpine", "2.1.4", "2.2.0", "2.2-alpine", "latest", "2.1.4-openssl"]
+        payload = {"results": [{"name": name} for name in names], "next": None}
+        with mock.patch.object(releases, "_get_json", return_value=payload):
+            self.assertEqual([tag.tag for tag in releases.hub_tags("library/eclipse-mosquitto", "-alpine")], ["2.1.4-alpine", "2.2-alpine"])
+            self.assertEqual([tag.tag for tag in releases.hub_tags("library/eclipse-mosquitto")], ["2.1.4", "2.2.0"])
 
 
 class StateTests(unittest.TestCase):
@@ -1045,13 +1119,13 @@ class QtsTests(unittest.TestCase):
 class SameAsBeforeConfigTests(unittest.TestCase):
     """config.toml makes the same decisions as the tables it replaced, copied here as they were."""
 
-    FLOATING = {"cloudflare-tunnel": None, "traefik": "traefik:v3", "uptime-kuma": None}
-    GITHUB = {
-        "homeassistant": "home-assistant/core",
-        "zigbee2mqtt": "Koenkk/zigbee2mqtt", "opencloud-opencloud-1": "opencloud-eu/opencloud",
+    FLOATING = {"cloudflare-tunnel": None, "traefik": None, "uptime-kuma": None}
+    GITHUB = {"opencloud-opencloud-1": "opencloud-eu/opencloud"}
+    HUB: dict[str, str] = {}
+    IMMEDIATE = {
+        "traefik", "cloudflare-tunnel", "beszel", "beszel-agent", "uptime-kuma", "dockge",
+        "homeassistant", "zigbee2mqtt", "mosquitto", "homer",
     }
-    HUB = {"mosquitto": "library/eclipse-mosquitto"}
-    IMMEDIATE = {"traefik", "cloudflare-tunnel", "beszel", "beszel-agent", "uptime-kuma", "dockge"}
     IMMICH = ("immich_server", "immich_machine_learning")
     APP_VERSION = {"uptime-kuma": "/app/package.json", "dockge": "/app/package.json"}
     VERSION_COMMAND = {"cloudflare-tunnel": ("cloudflared", "--version")}
@@ -1059,7 +1133,7 @@ class SameAsBeforeConfigTests(unittest.TestCase):
         "adguard": "AdGuard Home", "homeassistant": "Home Assistant", "zigbee2mqtt": "Zigbee2MQTT",
         "mosquitto": "Mosquitto", "opencloud-opencloud-1": "OpenCloud", "traefik": "Traefik",
         "cloudflare-tunnel": "Cloudflared", "beszel": "Beszel", "uptime-kuma": "Uptime Kuma",
-        "dockge": "Dockge", "immich": "Immich", "plex": "Plex", "qts": "QTS",
+        "dockge": "Dockge", "immich": "Immich", "plex": "Plex", "qts": "QTS", "homer": "Homer",
     }
     RELEASES = {
         "traefik": ("https://github.com/traefik/traefik/releases", True),
@@ -1126,9 +1200,13 @@ class SameAsBeforeConfigTests(unittest.TestCase):
         order = []
         with mock.patch.object(jobs, "update_floating", lambda *args: order.append(args[-1].key)), \
                 mock.patch.object(jobs, "update_semver", lambda *args: order.append(args[-1].key)), \
-                mock.patch.object(jobs, "collect_pinned", lambda *args: order.append("pinned")):
+                mock.patch.object(jobs, "collect_pinned", lambda *args: order.append("pinned")), \
+                mock.patch.object(jobs, "collect_outside", lambda *args: order.append("outside")):
             run(FakeDocker({}), CONFIG, False)
-        self.assertEqual(order, ["immich", "cloudflare-tunnel", "traefik", "uptime-kuma", "beszel", "adguard", "pinned", "dockge"])
+        self.assertEqual(order, [
+            "immich", "cloudflare-tunnel", "traefik", "uptime-kuma", "beszel", "adguard",
+            "homeassistant", "zigbee2mqtt", "mosquitto", "homer", "pinned", "outside", "dockge",
+        ])
 
 
 class ConfigTests(unittest.TestCase):
@@ -1346,7 +1424,8 @@ class ComposeLabelTests(unittest.TestCase):
             "dockge": Box("louislam/dockge:1", "dockge-old", "dockge", "dockge"),
             "traefik": Box("traefik:v3", "old", "traefik", "traefik"),
         }, {"louislam/dockge:1": "dockge-new", "traefik:v3": "new"})
-        with mock.patch.dict(os.environ, {"PLEX_VERSION": "", "QTS_VERSION": ""}):
+        with mock.patch.dict(os.environ, {"PLEX_VERSION": "", "QTS_VERSION": ""}), \
+                mock.patch.object(jobs, "github_releases", return_value=[]):
             outcome = run(docker, CONFIG, False)
         self.assertEqual([bump.key for bump in outcome.bumps], ["traefik", "dockge"])
         ups = [call for call in docker.calls if call[0] in ("recreate",) or call[:3] == ("compose", "traefik", "up")]

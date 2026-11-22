@@ -19,6 +19,7 @@ KINDS = {
     "semver": "patch now, a new minor waits a week",
     "report": "pinned, email if a newer release exists",
 }
+TAG_LINE = re.compile(r"v?(\d+(?:\.\d+)*)(-[A-Za-z][\w.-]*)?")
 HOLD_NOTE = "Unused images are kept until updates/state/prune.hold is deleted."
 PLEX_DOWNLOADS = "https://www.plex.tv/media-server-downloads/"
 QTS_DOWNLOADS = "https://www.qnap.com/en/download"
@@ -71,6 +72,7 @@ def run(docker: Docker, config: Config, dry: bool, rejected: set[tuple[str, str]
         step = (app.key, lambda app=app, update=update: update(docker, config, running, dry, outcome, rejected, app))
         (last if config.compose_container in app.containers else steps).append(step)
     steps.append(("updater", lambda: collect_pinned(docker, config, running, outcome.notices, outcome.unchecked)))
+    steps.append(("updater", lambda: collect_outside(docker, config, running, outcome.notices, outcome.unchecked)))
     for key, step in steps + last:
         try:
             step()
@@ -299,8 +301,9 @@ def release_url(app: App, version: str) -> str:
 
 
 def collect_notices(docker: Docker, config: Config, running: set[str], notices: list[Notice]) -> None:
-    """Pinned releases, Plex, and a semver minor that is still waiting. Changes nothing."""
+    """Pinned releases, Plex, floating releases outside their tag, and semver releases not installed. Changes nothing."""
     collect_pinned(docker, config, running, notices)
+    collect_outside(docker, config, running, notices)
     for app in config.apps.values():
         if app.policy != "semver":
             continue
@@ -326,6 +329,46 @@ def collect_pinned(docker: Docker, config: Config, running: set[str], notices: l
             log(f"could not check {app.title}: {exc}")
             if unchecked is not None:
                 unchecked.append((app.key, str(exc)))
+
+
+def collect_outside(docker: Docker, config: Config, running: set[str], notices: list[Notice], unchecked: list[tuple[str, str]] | None = None) -> None:
+    """A floating app's newest release that the tag it runs will never bring: a new minor for `v3.7`, a new major for `2`."""
+    for app in config.apps.values():
+        if app.policy != "floating" or not app.releases or app.main not in running:
+            continue
+        try:
+            _outside_notice(docker, notices, app)
+        except Exception as exc:
+            log(f"could not check {app.title}: {exc}")
+            if unchecked is not None:
+                unchecked.append((app.key, str(exc)))
+
+
+def tag_line(tag: str) -> tuple[tuple[int, ...], str] | None:
+    """The versions a tag follows and its variant: `v3.7` is ((3, 7), ""), `2.1-alpine` is ((2, 1), "-alpine"). `latest` follows none."""
+    match = TAG_LINE.fullmatch(tag)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group(1).split(".")), match.group(2) or ""
+
+
+def _outside_notice(docker: Docker, notices: list[Notice], app: App) -> None:
+    info = docker.inspect(app.main)
+    tag = split_ref(info.image.split("@", 1)[0])[1]
+    line = tag_line(tag)
+    if line is None:
+        return
+    prefix, suffix = line
+    current = parse_version(_version(docker, app, info))
+    if current is None:
+        log(f"could not read the {app.main} version, so releases past :{tag} are not checked")
+        return
+    found = latest_stable(_releases(app, suffix))
+    if found is None or not newer(found.version, current) or found.version[:len(prefix)] == prefix:
+        return
+    running_version, available = (".".join(str(part) for part in version) for version in (current, found.version))
+    notices.append(Notice(app.key, running_version, available, _release_page(app, found.tag)))
+    log(f"{app.title} {running_version} -> {available} is past :{tag}, installed by hand (email)")
 
 
 def _all_running(app: App, running: set[str]) -> bool:
@@ -374,9 +417,9 @@ def _sentence(text: str) -> str:
     return text if text.endswith(".") else f"{text}."
 
 
-def _releases(app: App):
+def _releases(app: App, suffix: str = ""):
     kind, _, repository = app.releases.partition(":")
-    return github_releases(repository) if kind == "github" else hub_tags(repository)
+    return github_releases(repository) if kind == "github" else hub_tags(repository, suffix)
 
 
 def _release_page(app: App, tag: str) -> str:
@@ -394,7 +437,12 @@ def _waiting_notice(app: App, current: str, held, notices: list[Notice]) -> None
     running_version = current.lstrip("v")
     available = held.tag.lstrip("v")
     notices.append(Notice(app.key, running_version, available, _release_page(app, held.tag)))
-    note = f"{held.tag} is a new minor, installed by hand" if app.pin_minor else wait_note(held)
+    if parse_version(current) and held.version[0] != parse_version(current)[0]:
+        note = f"{held.tag} is a new major, installed by hand"
+    elif app.pin_minor:
+        note = f"{held.tag} is a new minor, installed by hand"
+    else:
+        note = wait_note(held)
     log(f"{app.key} {running_version} -> {available}, {note}")
 
 

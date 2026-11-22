@@ -15,9 +15,11 @@ Installed in the NAS crontab. Updates run at 09:00, NAS time, after the QNAP job
 
 | Policy | Action | Today |
 | --- | --- | --- |
-| `floating` | Pull the tag the containers run and recreate only if the image changed. With `image`, any other tag is reported and left alone. | Cloudflared, Traefik (`traefik:v3`), Uptime Kuma, Beszel and its agent, Dockge |
-| `semver` | Follows the GitHub releases. A patch is taken that morning. A new minor's `.0` waits a week; a patch of that minor during the week is taken that morning. The exact tag is pulled and retagged as the tag the containers run (`:v3`), then Compose starts it with `--pull never`. Another major is never taken. With `pin_minor = true` only patches are; a newer minor is a **Newer releases** row in the Sunday mail. Not rolled back unless `rollback = true`. | Immich server and machine learning (`:v3`, no rollback); AdGuard Home (`:v1.0`, a local tag, patches only, rolled back) |
-| `report` | Never bumped. A newer release is included once, in the Sunday mail. | Home Assistant, Zigbee2MQTT, Mosquitto, OpenCloud, Plex, QTS |
+| `floating` | Pull the tag the containers run and recreate only if the image changed. The tag is how far it moves: a minor tag (`v3.7`) takes patches, a major tag (`2`) minors too, `latest` everything. The newest release past the tag is a **Newer releases** row in the Sunday mail, moved to by hand by changing the tag. With `image`, any other tag is reported and left alone. | Patches only: Traefik (`v3.7`), Home Assistant (`2026.11`), Zigbee2MQTT (`2.14`), Mosquitto (`2.1-alpine`). Within a major: Uptime Kuma (`2`), Beszel and its agent (`0`), Dockge (`1`). Everything: Cloudflared and Homer (`latest`, calendar versions) |
+| `semver` | Follows the GitHub releases. A patch is taken that morning. A new minor's `.0` waits a week; a patch of that minor during the week is taken that morning. The exact tag is pulled and retagged as the tag the containers run (`:v3`), then Compose starts it with `--pull never`. Another major is never taken; it is a **Newer releases** row. With `pin_minor = true` only patches are; a newer minor is a **Newer releases** row too. Not rolled back unless `rollback = true`. | Immich server and machine learning (`:v3`, no rollback); AdGuard Home (`:v1.0`, a local tag because AdGuard publishes no minor tag, patches only, rolled back) |
+| `report` | Never bumped. A newer release is included once, in the Sunday mail. | OpenCloud (its upgrade is a procedure, see `opencloud/AGENTS.md`), Plex, QTS |
+
+Critical services, the ones the house or the network stops without (DNS, Traefik, Home Assistant, Zigbee2MQTT, Mosquitto), take patches only: their minors may carry breaking changes, so those are read and moved to by hand. The rest take everything but a new major.
 
 `members` are the other containers of an app, such as Immich's Postgres and Valkey or OpenCloud's Collabora and Yjs. They are only named in the log.
 
