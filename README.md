@@ -25,6 +25,7 @@ One folder per stack at the repo root. Each is a self-contained Compose project 
 | [`nas-host/`](./nas-host/) | Host plumbing for the DNS container (not a stack) | macvlan network, shim, `/etc/resolv.conf` and the QTS boot hook; `bootstrap.sh` once per host |
 | [`ntfy/`](./ntfy/) | Push notification server | Alert sink for Kuma + Beszel; iOS via the ntfy.sh upstream relay |
 | [`opencloud/`](./opencloud/) | File sync + collaboration suite | OpenCloud + Collabora + Keycloak + LDAP behind Traefik |
+| [`socket-proxy/`](./socket-proxy/) | Read-only Docker API for Uptime Kuma and the Beszel agent | GET only, on containers, images and info; Kuma uses `http://socket-proxy:2375`, the agent `127.0.0.1:2375` |
 | [`traefik/`](./traefik/) | Reverse proxy — TLS + per-host routing | Routes in `dynamic/routes.yml`, one cert per hostname via Cloudflare DNS-01 |
 | [`updates/`](./updates/) | Morning container updates + weekly update mail (not a stack) | NAS cron runs `update.sh` in `python:3.14-alpine` with the Docker socket; apps and policies in `config.toml`; Compose through Dockge |
 | [`uptime-kuma/`](./uptime-kuma/) | Uptime monitoring | Liveness probes + outbound deadman heartbeat + push monitor for the morning updates |

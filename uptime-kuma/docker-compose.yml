@@ -8,12 +8,13 @@ services:
       - 127.0.0.1:3001:3001
     volumes:
       - .:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - TZ=Europe/Lisbon
       - UMASK=0022
     networks:
       - kuma_network
+      # Docker monitors use the "Docker NAS" host, http://socket-proxy:2375.
+      - socket-proxy
     healthcheck:
       test:
         - CMD
@@ -32,3 +33,5 @@ services:
 networks:
   kuma_network:
     driver: bridge
+  socket-proxy:
+    external: true

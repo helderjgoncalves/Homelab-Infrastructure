@@ -1,0 +1,42 @@
+# Read-only Docker API for Uptime Kuma and the Beszel agent, so neither
+# holds docker.sock. Only GET on /containers, /images and /info (plus ping,
+# version, events) goes through; anything that creates, starts, stops or
+# execs is refused. The agent reads images and info when the hub connects.
+#
+#   - Uptime Kuma reaches it as http://socket-proxy:2375 on the
+#     socket-proxy network (its "Docker NAS" host).
+#   - The Beszel agent runs on the host network and uses 127.0.0.1:2375.
+#
+# Docs: https://github.com/linuxserver/docker-socket-proxy
+
+name: socket-proxy
+services:
+  socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:latest
+    container_name: socket-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      INFO: 1
+      POST: 0
+      TZ: Europe/Lisbon
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    tmpfs:
+      - /run
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - 127.0.0.1:2375:2375
+    networks:
+      - socket-proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+networks:
+  socket-proxy:
+    name: socket-proxy

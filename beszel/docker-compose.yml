@@ -48,10 +48,10 @@ services:
     network_mode: host
     volumes:
       - ./agent_data:/var/lib/beszel-agent
-      # Read-only Docker socket so the agent can list containers and pull stats
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       LISTEN: 45876
+      # Read-only Docker API from the socket-proxy stack, not docker.sock.
+      DOCKER_HOST: tcp://127.0.0.1:2375
       TZ: Europe/Lisbon
       # Hub public key — set KEY in .env (copy from .env.example).
       KEY: ${KEY:?set KEY in .env}
