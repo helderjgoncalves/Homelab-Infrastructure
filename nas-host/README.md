@@ -75,6 +75,36 @@ A drop in `/etc/config/autorun.d/` is **never executed** on this NAS. Only the D
 The DOM copy holds the watchdog's **absolute path**. Moving or renaming this folder or
 `dns-watchdog.sh` silently breaks the next boot until `install-autorun.sh` is re-run.
 
+## UPS
+
+`upsd` listens on `127.0.0.1:3493` only. Home Assistant uses the host network, so a NUT integration uses that address. The UPS name is the section in `/etc/config/ups/ups.conf` (that file is not in git). The path works only while Home Assistant stays on the host network.
+
+Leave the `LISTEN` line in place. `/etc/init.d/usb_ups.sh` appends `LISTEN 0.0.0.0` only when the line is missing. A reboot, or saving the UPS page in Control Panel, can still rewrite the file. Nothing on boot repairs it. After a reboot, check again:
+
+```sh
+grep '^LISTEN ' /etc/config/ups/upsd.conf
+netstat -tln | grep 3493
+```
+
+Expect `LISTEN 127.0.0.1` and a socket on `127.0.0.1:3493` only. `0.0.0.0:3493` means the old address came back. Put `LISTEN 127.0.0.1` back and restart the daemon on its own:
+
+```sh
+/sbin/daemon_mgr upsd stop "/usr/sbin/upsd"
+/sbin/daemon_mgr upsd start "/usr/sbin/upsd -u admin"
+```
+
+Do not use `/etc/init.d/ups.sh restart`. Its stop path turns Server Mode off and stops the USB driver.
+
+## Docker API listener
+
+Container Station's Docker daemon also listens on TCP `2376` (TLS with client certificates). Nothing here uses it: the stacks, Dockge, the updater and the socket proxy all use `/var/run/docker.sock`. `DOCKER_LISTEN=127.0.0.1` in `container-station/data/config-override-docker.ini` (not in git) keeps it on loopback. The daemon reads that file only when it starts, and Container Station may write `0.0.0.0` back on an update. After a reboot, check:
+
+```sh
+netstat -tln | grep 2376
+```
+
+Expect `127.0.0.1:2376`. `:::2376` or `0.0.0.0:2376` means the old value came back.
+
 ## Troubleshooting
 
 ```sh

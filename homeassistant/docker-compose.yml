@@ -12,6 +12,8 @@ services:
     # HomeKit / Cast device discovery. It also puts 8123 on every host
     # interface, so HA's network settings bind its HTTP server to 127.0.0.1
     # and Traefik stays the only way in (see README.md).
+    # The same host network is how HA reaches upsd on 127.0.0.1:3493.
+    # See nas-host/README.md.
     network_mode: host
     environment:
       - TZ=Europe/Lisbon
