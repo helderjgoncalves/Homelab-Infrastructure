@@ -82,10 +82,6 @@ http:
       rule: Host(`beszel.hgoncalves.uk`)
       service: beszel
       middlewares: [private]
-    ntfy:
-      rule: Host(`ntfy.hgoncalves.uk`)
-      service: ntfy
-      middlewares: [private]
     qbittorrent:
       rule: Host(`qbittorrent.hgoncalves.uk`)
       service: qbittorrent
@@ -148,8 +144,6 @@ http:
       loadBalancer: {servers: [{url: http://127.0.0.1:3001}]}
     beszel:
       loadBalancer: {servers: [{url: http://127.0.0.1:8090}]}
-    ntfy:
-      loadBalancer: {servers: [{url: http://127.0.0.1:8088}]}
     qbittorrent:
       loadBalancer: {servers: [{url: http://127.0.0.1:9080}]}
     sonarr:
