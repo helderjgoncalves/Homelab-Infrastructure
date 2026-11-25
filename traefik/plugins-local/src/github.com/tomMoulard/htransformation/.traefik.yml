@@ -1,0 +1,31 @@
+displayName: Header transformation
+type: middleware
+
+import: github.com/tomMoulard/htransformation
+
+summary: 'Transform some headers with some other ones, see https://github.com/traefik/traefik/issues/6047'
+
+testData:
+  Rules:
+    - Rule:
+      Name: 'Header renaming'
+      Header: 'X-Traefik-*'
+      Value: 'X-custom'
+      Type: 'Rename'
+    - Rule:
+      Name: 'Header addition'
+      Header: 'NewHeader'
+      Value: 'True'
+      Type: 'Set'
+    - Rule:
+      Name: 'Header deletion'
+      Header: 'Cache-Control'
+      Type: 'Del'
+    - Rule:
+      Name: 'Header joining'
+      Header: 'Accept-Language'
+      Sep: ', '
+      Values:
+        - 'Foo'
+        - 'Bar'
+      Type: 'Join'

@@ -33,7 +33,7 @@ Replaced Nginx Proxy Manager in 2026-10. NPM's stack was removed from the repo; 
 
 ## Router (ONT) cookie fix
 
-NPM's custom nginx rule for `router.hgoncalves.uk` is replaced by the `router-cookie` middleware (the [htransformation](https://github.com/tomMoulard/htransformation) plugin, downloaded from the Traefik plugin catalog at startup — first boot needs internet). If the ONT login ever breaks, open the ONT by IP.
+NPM's custom nginx rule for `router.hgoncalves.uk` is replaced by the `router-cookie` middleware (the [htransformation](https://github.com/tomMoulard/htransformation) plugin, `v0.4.1`, loaded from `plugins-local/` so a boot needs neither DNS nor the plugin catalog; to update it, replace that folder with a newer release and update `htransformation.version`). If the ONT login ever breaks, open the ONT by IP.
 
 ## Hostname renames (2026-10)
 

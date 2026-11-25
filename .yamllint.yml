@@ -15,6 +15,7 @@ extends: default
 
 ignore: |
   opencloud/
+  traefik/plugins-local/
   homeassistant/config/automations.yaml
   homeassistant/config/scripts.yaml
   homeassistant/config/scenes.yaml

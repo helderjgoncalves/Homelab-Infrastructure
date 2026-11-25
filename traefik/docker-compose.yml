@@ -44,9 +44,9 @@ services:
       - --certificatesresolvers.cf.acme.dnsChallenge.resolvers=1.1.1.1:53,1.0.0.1:53
 
       # Request-header regex rewrite (router cookie fix in middlewares.yml).
-      # Fetched from the Traefik plugin catalog at startup.
-      - --experimental.plugins.htransformation.moduleName=github.com/tomMoulard/htransformation
-      - --experimental.plugins.htransformation.version=v0.4.1
+      # Loaded from ./plugins-local (v0.4.1, see htransformation.version),
+      # so a boot needs neither DNS nor the plugin catalog.
+      - --experimental.localPlugins.htransformation.moduleName=github.com/tomMoulard/htransformation
 
       - --providers.file.directory=/etc/traefik/dynamic
       - --providers.file.watch=true
@@ -57,6 +57,7 @@ services:
     volumes:
       - ./dynamic:/etc/traefik/dynamic:ro
       - ./acme:/acme
+      - ./plugins-local:/plugins-local:ro
     healthcheck:
       test:
         - CMD

@@ -214,6 +214,7 @@ build/
 # Go
 bin/
 pkg/
+!traefik/plugins-local/src/github.com/tomMoulard/htransformation/pkg/
 
 # -----------------------------------------------------------------------------
 # Editors & OS noise
