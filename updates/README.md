@@ -67,7 +67,7 @@ Resend settings live in `updates/.env` (mode 600, gitignored). Copy `.env.exampl
 
 ## Push
 
-Each update that held is also pushed to ntfy that morning: "Traefik updated, 3.7.19 → 3.7.20", opening its release notes when tapped. It goes to `NTFY_TOPIC` in `updates/.env` on ntfy.sh (`NTFY_URL` for another server), the same topic Uptime Kuma alerts on, at low priority so it makes no sound. A push that fails is only logged; the Sunday mail still lists the update. Failures and newer releases are mailed, not pushed. Without a topic, nothing is pushed.
+Each update is also pushed to ntfy that morning: "Traefik 3.7.20, updated from 3.7.19", with the app's icon and a **Release notes** button. It goes to `NTFY_TOPIC` in `updates/.env` on ntfy.sh (`NTFY_URL` for another server), a topic of its own. The icon is the one in `icons/`, fetched from this public repo: the `icon` field for Android and the web app, and an attachment, because iOS shows only that. A push that fails is only logged; the Sunday mail still lists the update. Failures and newer releases are mailed, not pushed. Without a topic, nothing is pushed.
 
 `updates/state/` remembers what was already mailed. It is gitignored. A lock older than four hours belongs to a run that died; the next run clears it and mails that it did.
 
