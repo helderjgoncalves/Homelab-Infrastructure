@@ -67,7 +67,9 @@ Resend settings live in `updates/.env` (mode 600, gitignored). Copy `.env.exampl
 
 ## Push
 
-Each update is also pushed to ntfy that morning: "Traefik 3.7.19 → 3.7.20", with the app's icon and a **Release notes** button. It goes to `NTFY_TOPIC` in `updates/.env` on ntfy.sh (`NTFY_URL` for another server), a topic of its own. The icon is the one in `icons/`, fetched from this public repo: the `icon` field for Android and the web app, and an attachment, because iOS shows only that. A push that fails is only logged; the Sunday mail still lists the update. Failures and newer releases are mailed, not pushed. Without a topic, nothing is pushed.
+Each update is also pushed to ntfy that morning: "Traefik 3.7.19 → 3.7.20", with the app's icon and a **Release notes** button. It goes to `NTFY_TOPIC` in `updates/.env` on ntfy.sh (`NTFY_URL` for another server), a topic of its own. The icon is the one in `icons/`, fetched from this public repo: the `icon` field for Android and the web app, and an attachment, because iOS shows only that. A push that fails is only logged; the Sunday mail still lists the update. Without a topic, nothing is pushed.
+
+A new release to install by hand is pushed once, the first morning it is seen: "Radarr 7.0.3.10918 is out", "You run 6.4.4.10685. A new major, install it by hand." That is a new major, a new AdGuard minor, or a newer Plex, QTS or OpenCloud. An Immich minor that waits out its first days is not pushed, since it then installs by itself. `state/pushed.tsv` keeps what was pushed, so the next mornings stay quiet; a push that failed is tried again the next morning, and a newer release of the same app is pushed again. Once the Sunday mail lists a release, its row is dropped. Failures are mailed, not pushed.
 
 `updates/state/` remembers what was already mailed. It is gitignored. A lock older than four hours belongs to a run that died; the next run clears it and mails that it did.
 
@@ -90,7 +92,7 @@ The stacks directory is the parent of this folder. Nothing in the Python is pinn
 | `jobs.py` | One path per policy: what is bumped, mailed, or left alone. |
 | `releases.py` | Version rules, GitHub, Docker Hub, the Plex download feed, and QTS Live Update. |
 | `mail.py` | The card mail. |
-| `push.py` | The ntfy push for each update. |
+| `push.py` | The ntfy push for each update and each release to install by hand. |
 | `runtime.py` | Docker over the socket, API 1.41 or the daemon's minimum if that is newer. Compose runs inside the compose container, with the files from the container labels. |
 | `test_update.py` | The config and its mistakes, the same decisions as before the config, the week rule, rollback, Immich, Compose labels, the weekly state, the lock, the prune, release-check failures, and the mail. No Docker. |
 

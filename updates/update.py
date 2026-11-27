@@ -4,7 +4,8 @@
 The stacks directory is the parent of this file. Nothing here is pinned to a
 machine path.
 
-  updates/update.sh                update at 09:00, push each update to ntfy, mail an error, hold the rest
+  updates/update.sh                update at 09:00, push each update and each new release to install by hand
+                                   to ntfy, mail an error, hold the rest
   updates/update.sh --digest       Sunday noon mail, then prune unused images; no updates
   updates/update.sh --dry-run      decide only
   updates/update.sh --check        confirm the compose container can run compose
@@ -29,6 +30,7 @@ from runtime import HERE, Docker, DockerError, log
 
 STATE = HERE / "state"
 NOTIFIED = STATE / "notified.tsv"
+PUSHED = STATE / "pushed.tsv"
 FAILURES = STATE / "failures.tsv"
 BUMPS = STATE / "weekly-bumps.tsv"
 DUE = STATE / "digest.due"
@@ -79,11 +81,15 @@ def main(argv: list[str]) -> int:
         if stale:
             log(f"cleared the lock of a run that started {stale} and did not finish")
         if digest:
-            code = _send_report(_notices(docker, config), [], [], dry, weekly=True)
+            notices = _notices(docker, config)
+            _push_releases(notices, dry)
+            code = _send_report(notices, [], [], dry, weekly=True)
             _weekly_prune(docker, dry)
             return code
         if "--notify-only" in argv:
-            return _send_notices(_notices(docker, config), dry)
+            notices = _notices(docker, config)
+            _push_releases(notices, dry)
+            return _send_notices(notices, dry)
         outcome = Outcome()
         try:
             outcome = run(docker, config, dry, _load_rejected(), outcome)
@@ -99,6 +105,7 @@ def main(argv: list[str]) -> int:
             outcome.issues.extend(_unchecked_issues(outcome.unchecked, _clock()[1]))
             outcome.issues.extend(_prune_error())
         _push(outcome.bumps, dry)
+        _push_releases(outcome.notices, dry)
         return _send_report(outcome.notices, outcome.bumps, outcome.issues, dry)
     finally:
         if not dry:
@@ -398,18 +405,52 @@ def _push(bumps, dry: bool) -> None:
         for bump in bumps:
             log(f"would push: {bump.title} {bump.before} → {bump.after}")
         return
+    for bump in _send_pushes(bumps):
+        log(f"pushed {bump.title} {bump.before} → {bump.after}")
+
+
+def _push_releases(notices, dry: bool) -> None:
+    """One push per release to install by hand, the first time it is seen. One that fails is tried again the next morning."""
+    mailed = {(parts[0], parts[2]) for parts in _notified().values()}
+    pushed = {release for release in _pushed() if release not in mailed}
+    fresh = [notice for notice in _pending(notices) if notice.by_hand and (notice.key, notice.available) not in pushed]
+    if dry:
+        for notice in fresh:
+            log(f"would push: {notice.title} {notice.available} is out")
+        return
+    sent = _send_pushes(fresh)
+    for notice in sent:
+        log(f"pushed {notice.title} {notice.available} is out")
+    rows = pushed | {(notice.key, notice.available) for notice in sent}
+    if rows != _pushed():
+        _write(PUSHED, "".join(f"{key}\t{available}\n" for key, available in sorted(rows)))
+
+
+def _pushed() -> set[tuple[str, str]]:
+    if not PUSHED.is_file():
+        return set()
+    rows = (line.split("\t") for line in PUSHED.read_text().splitlines())
+    return {(parts[0], parts[1]) for parts in rows if len(parts) == 2}
+
+
+def _send_pushes(items: list) -> list:
+    """The items whose push went out. A push that fails is logged only: the weekly mail still has it."""
+    if not items:
+        return []
     env = _read_env() or {}
     topic = env.get("NTFY_TOPIC", "")
     if not topic:
         log("NTFY_TOPIC is not set, no push sent")
-        return
-    for bump in bumps:
+        return []
+    sent = []
+    for item in items:
         try:
-            push.send(bump, topic, env.get("NTFY_URL") or push.NTFY_URL)
+            push.send(item, topic, env.get("NTFY_URL") or push.NTFY_URL)
         except Exception as exc:
-            log(f"push for {bump.key} failed: {exc}")
+            log(f"push for {item.key} failed: {exc}")
         else:
-            log(f"pushed {bump.title} {bump.before} → {bump.after}")
+            sent.append(item)
+    return sent
 
 
 def _read_env() -> dict[str, str] | None:

@@ -462,13 +462,14 @@ def _hub_page(repository: str) -> str:
 def _waiting_notice(app: App, current: str, held, notices: list[Notice]) -> None:
     running_version = current.lstrip("v")
     available = held.tag.lstrip("v")
-    notices.append(Notice(app.key, running_version, available, _release_page(app, held.tag)))
+    by_hand = True
     if parse_version(current) and held.version[0] != parse_version(current)[0]:
         note = f"{held.tag} is a new major, installed by hand"
     elif app.pin_minor:
         note = f"{held.tag} is a new minor, installed by hand"
     else:
-        note = wait_note(held)
+        note, by_hand = wait_note(held), False
+    notices.append(Notice(app.key, running_version, available, _release_page(app, held.tag), by_hand))
     log(f"{app.key} {running_version} -> {available}, {note}")
 
 

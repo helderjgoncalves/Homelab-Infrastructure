@@ -738,6 +738,7 @@ class StateTests(unittest.TestCase):
         paths = {
             "STATE": state,
             "NOTIFIED": state / "notified.tsv",
+            "PUSHED": state / "pushed.tsv",
             "FAILURES": state / "failures.tsv",
             "BUMPS": state / "weekly-bumps.tsv",
             "DUE": state / "digest.due",
@@ -1139,6 +1140,88 @@ class PushTests(MainCase):
         request = urlopen.call_args.args[0]
         self.assertEqual((request.full_url, request.get_method()), ("https://ntfy.sh", "POST"))
         self.assertEqual(json.loads(request.data)["topic"], "t")
+
+
+class ReleasePushTests(MainCase):
+    """A release to install by hand is pushed once, the first morning it is seen."""
+
+    RADARR = Notice("radarr", "6.4.4.10685", "7.0.3.10918", "https://github.com/Radarr/Radarr/releases/tag/v7.0.3.10918")
+    IMMICH = Notice("immich", "3.4.1", "3.5.0", "https://github.com/immich-app/immich/releases/tag/v3.5.0", by_hand=False)
+
+    def setUp(self):
+        super().setUp()
+        self.outcome.notices.extend([self.RADARR, self.IMMICH])
+        (self.dir / ".env").write_text("NTFY_TOPIC=t\n")
+        patcher = mock.patch.dict(os.environ, {"UPDATE_TODAY": "2026-11-16", "UPDATE_WDAY": "1"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def pushed(self) -> list:
+        return [item for item, _topic, _server in self.pushes]
+
+    def test_a_release_is_pushed_once_not_every_morning(self):
+        self.assertEqual(update.main([]), 0)
+        update.main([])
+        self.assertEqual(self.pushed(), [self.RADARR])
+        self.assertEqual(self.letters, [])
+
+    def test_a_newer_release_of_the_same_app_is_pushed_again(self):
+        update.main([])
+        newer = Notice("radarr", "6.4.4.10685", "7.0.4.10950", self.RADARR.url)
+        self.outcome.notices[:] = [newer]
+        update.main([])
+        self.assertEqual(self.pushed(), [self.RADARR, newer])
+
+    def test_a_failed_push_is_tried_again_the_next_morning(self):
+        self.push_error = RuntimeError("ntfy returned HTTP 429")
+        self.assertEqual(update.main([]), 0)
+        self.push_error = None
+        update.main([])
+        self.assertEqual(self.pushed(), [self.RADARR])
+
+    def test_a_release_already_mailed_is_not_pushed(self):
+        update._remember_notices([self.RADARR])
+        update.main([])
+        self.assertEqual(self.pushes, [])
+
+    def test_the_weekly_mail_clears_what_was_pushed(self):
+        update.main([])
+        self.assertEqual(update._pushed(), {("radarr", "7.0.3.10918")})
+        update._remember_notices([self.RADARR])
+        update.main([])
+        self.assertEqual((update._pushed(), self.pushed()), (set(), [self.RADARR]))
+
+    def test_a_release_first_seen_on_sunday_is_pushed_and_mailed(self):
+        self.outcome.notices.clear()
+        with mock.patch.object(update, "collect_notices", lambda _docker, _config, _running, notices: notices.append(self.RADARR)):
+            update.main(["--digest"])
+        self.assertEqual(self.pushed(), [self.RADARR])
+        self.assertEqual(len(self.letters), 1)
+
+    def test_a_dry_run_pushes_and_keeps_nothing(self):
+        update.main(["--dry-run"])
+        self.assertEqual((self.pushes, update.PUSHED.exists()), ([], False))
+
+    def test_the_message(self):
+        mail.use_titles(CONFIG.titles)
+        icon = "https://raw.githubusercontent.com/helderjgoncalves/Homelab-Infrastructure/main/updates/icons/radarr.png"
+        self.assertEqual(push.message(self.RADARR, "t"), {
+            "topic": "t", "title": "Radarr 7.0.3.10918 is out", "message": "You run 6.4.4.10685. A new major, install it by hand.",
+            "click": self.RADARR.url, "actions": [{"action": "view", "label": "Release notes", "url": self.RADARR.url, "clear": True}],
+            "icon": icon, "attach": icon, "filename": "radarr.png",
+        })
+        minor = push.message(Notice("adguard", "0.107.79", "0.108.0", "https://github.com/AdguardTeam/AdGuardHome/releases/tag/v0.108.0"), "t")
+        self.assertEqual((minor["title"], minor["message"]), ("AdGuard Home 0.108.0 is out", "You run 0.107.79. Install it by hand."))
+        plex = push.message(Notice("plex", "1.42.1.10060", "1.42.2.10156", jobs.PLEX_DOWNLOADS), "t")
+        self.assertEqual(plex["actions"][0]["label"], "Open")
+
+    def test_only_a_minor_that_waits_installs_by_itself(self):
+        now = datetime.now(timezone.utc)
+        notices: list = []
+        jobs._waiting_notice(APPS["immich"], "v3.4.1", release("v3.5.0", 0, now=now), notices)
+        jobs._waiting_notice(APPS["adguard"], "v0.107.79", release("v0.108.0", 0, now=now), notices)
+        jobs._waiting_notice(APPS["immich"], "v3.4.1", release("v4.0.0", 0, now=now), notices)
+        self.assertEqual([notice.by_hand for notice in notices], [False, True, True])
 
 
 class MailTests(unittest.TestCase):
