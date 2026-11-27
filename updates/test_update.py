@@ -1116,14 +1116,16 @@ class PushTests(MainCase):
         notes = "https://github.com/traefik/traefik/releases/tag/v3.7.20"
         icon = "https://raw.githubusercontent.com/helderjgoncalves/Homelab-Infrastructure/main/updates/icons/traefik.png"
         self.assertEqual(push.message(self.BUMPS[0], "t"), {
-            "topic": "t", "title": "Traefik 3.7.20", "message": "Updated from 3.7.19.", "tags": ["white_check_mark"],
+            "topic": "t", "title": "Traefik 3.7.19 → 3.7.20", "message": "Updated and running.",
             "click": notes, "actions": [{"action": "view", "label": "Release notes", "url": notes, "clear": True}],
             "icon": icon, "attach": icon, "filename": "traefik.png",
         })
         bare = push.message(Bump("updater", "", ""), "t")
-        self.assertEqual((bare["title"], bare["message"]), ("Updater updated", "Updated."))
+        self.assertEqual((bare["title"], bare["message"]), ("Updater updated", "Updated and running."))
         self.assertFalse({"click", "actions", "icon", "attach"} & set(bare))
-        self.assertEqual(push.message(Bump("cloudflare-tunnel", "2026.11.0", "2026.11.0"), "t")["message"], "New build of the same version.")
+        rebuild = push.message(Bump("cloudflare-tunnel", "2026.11.0", "2026.11.0"), "t")
+        self.assertEqual((rebuild["title"], rebuild["message"]), ("Cloudflared 2026.11.0", "New build of the same version."))
+        self.assertEqual(push.message(Bump("seerr", "", "v3.5.2"), "t")["title"], "Seerr v3.5.2")
 
     def test_every_app_icon_is_in_the_repo(self):
         missing = [key for key in APPS if not (mail.ICONS / f"{key}.png").is_file()]

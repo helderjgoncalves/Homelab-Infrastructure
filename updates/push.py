@@ -14,12 +14,7 @@ ICON_URL = "https://raw.githubusercontent.com/helderjgoncalves/Homelab-Infrastru
 
 
 def message(bump: Bump, topic: str) -> dict:
-    body = {
-        "topic": topic,
-        "title": f"{bump.title} {bump.after}".strip() if bump.after else f"{bump.title} updated",
-        "message": _detail(bump),
-        "tags": ["white_check_mark"],
-    }
+    body = {"topic": topic, "title": _title(bump), "message": _detail(bump)}
     if bump.url:
         body["click"] = bump.url
         body["actions"] = [{"action": "view", "label": "Release notes", "url": bump.url, "clear": True}]
@@ -30,12 +25,18 @@ def message(bump: Bump, topic: str) -> dict:
     return body
 
 
+def _title(bump: Bump) -> str:
+    if bump.before and bump.after and bump.before != bump.after:
+        return f"{bump.title} {bump.before} → {bump.after}"
+    if bump.after or bump.before:
+        return f"{bump.title} {bump.after or bump.before}"
+    return f"{bump.title} updated"
+
+
 def _detail(bump: Bump) -> str:
     if bump.before and bump.before == bump.after:
         return "New build of the same version."
-    if bump.before:
-        return f"Updated from {bump.before}."
-    return "Updated."
+    return "Updated and running."
 
 
 def send(bump: Bump, topic: str, server: str = NTFY_URL) -> None:
