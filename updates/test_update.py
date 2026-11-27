@@ -1221,7 +1221,9 @@ class ReleasePushTests(MainCase):
         jobs._waiting_notice(APPS["immich"], "v3.4.1", release("v3.5.0", 0, now=now), notices)
         jobs._waiting_notice(APPS["adguard"], "v0.107.79", release("v0.108.0", 0, now=now), notices)
         jobs._waiting_notice(APPS["immich"], "v3.4.1", release("v4.0.0", 0, now=now), notices)
-        self.assertEqual([notice.by_hand for notice in notices], [False, True, True])
+        undated = Release((3, 5, 0), "v3.5.0", None)
+        jobs._waiting_notice(APPS["immich"], "v3.4.1", undated, notices)
+        self.assertEqual([notice.by_hand for notice in notices], [False, True, True, True])
 
 
 class MailTests(unittest.TestCase):

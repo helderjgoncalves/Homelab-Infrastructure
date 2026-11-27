@@ -468,7 +468,8 @@ def _waiting_notice(app: App, current: str, held, notices: list[Notice]) -> None
     elif app.pin_minor:
         note = f"{held.tag} is a new minor, installed by hand"
     else:
-        note, by_hand = wait_note(held), False
+        # Without a publish date the minor is never eligible, so it waits for a hand.
+        note, by_hand = wait_note(held), held.published is None
     notices.append(Notice(app.key, running_version, available, _release_page(app, held.tag), by_hand))
     log(f"{app.key} {running_version} -> {available}, {note}")
 

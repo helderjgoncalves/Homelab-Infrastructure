@@ -40,7 +40,7 @@ class Notice:
     running: str
     available: str
     url: str
-    # False for a minor that only waits out its first days and then installs by itself.
+    # False for a minor that only waits out its first week and then installs by itself.
     by_hand: bool = True
 
     @property
