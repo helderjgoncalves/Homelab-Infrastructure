@@ -65,6 +65,10 @@ The mail is one row per app, for the main container only: name on the left, vers
 
 Resend settings live in `updates/.env` (mode 600, gitignored). Copy `.env.example`. `RESEND_FROM` must use a domain verified in Resend.
 
+## Push
+
+Each update that held is also pushed to ntfy that morning: "Traefik updated, 3.7.19 → 3.7.20", opening its release notes when tapped. It goes to `NTFY_TOPIC` in `updates/.env` on ntfy.sh (`NTFY_URL` for another server), the same topic Uptime Kuma alerts on, at low priority so it makes no sound. A push that fails is only logged; the Sunday mail still lists the update. Failures and newer releases are mailed, not pushed. Without a topic, nothing is pushed.
+
 `updates/state/` remembers what was already mailed. It is gitignored. A lock older than four hours belongs to a run that died; the next run clears it and mails that it did.
 
 ## Heartbeat
@@ -86,6 +90,7 @@ The stacks directory is the parent of this folder. Nothing in the Python is pinn
 | `jobs.py` | One path per policy: what is bumped, mailed, or left alone. |
 | `releases.py` | Version rules, GitHub, Docker Hub, the Plex download feed, and QTS Live Update. |
 | `mail.py` | The card mail. |
+| `push.py` | The ntfy push for each update. |
 | `runtime.py` | Docker over the socket, API 1.41 or the daemon's minimum if that is newer. Compose runs inside the compose container, with the files from the container labels. |
 | `test_update.py` | The config and its mistakes, the same decisions as before the config, the week rule, rollback, Immich, Compose labels, the weekly state, the lock, the prune, release-check failures, and the mail. No Docker. |
 

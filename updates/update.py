@@ -4,7 +4,7 @@
 The stacks directory is the parent of this file. Nothing here is pinned to a
 machine path.
 
-  updates/update.sh                update at 09:00, mail an error, hold the rest
+  updates/update.sh                update at 09:00, push each update to ntfy, mail an error, hold the rest
   updates/update.sh --digest       Sunday noon mail, then prune unused images; no updates
   updates/update.sh --dry-run      decide only
   updates/update.sh --check        confirm the compose container can run compose
@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import push
 from config import Config, ConfigError, load as load_config
 from jobs import Outcome, collect_notices, run
 from mail import Bump, Issue, pinned_letter, send, use_titles
@@ -97,6 +98,7 @@ def main(argv: list[str]) -> int:
             _keep_rollback_state(outcome)
             outcome.issues.extend(_unchecked_issues(outcome.unchecked, _clock()[1]))
             outcome.issues.extend(_prune_error())
+        _push(outcome.bumps, dry)
         return _send_report(outcome.notices, outcome.bumps, outcome.issues, dry)
     finally:
         if not dry:
@@ -388,9 +390,30 @@ def _deliver(letter, dry: bool) -> int:
     return 0
 
 
-def _env() -> dict[str, str] | None:
+def _push(bumps, dry: bool) -> None:
+    """One ntfy push per update. A push that fails is logged only: the weekly mail still has the update."""
+    if not bumps:
+        return
+    if dry:
+        for bump in bumps:
+            log(f"would push: {bump.title} {bump.before} → {bump.after}")
+        return
+    env = _read_env() or {}
+    topic = env.get("NTFY_TOPIC", "")
+    if not topic:
+        log("NTFY_TOPIC is not set, no push sent")
+        return
+    for bump in bumps:
+        try:
+            push.send(bump, topic, env.get("NTFY_URL") or push.NTFY_URL)
+        except Exception as exc:
+            log(f"push for {bump.key} failed: {exc}")
+        else:
+            log(f"pushed {bump.title} {bump.before} → {bump.after}")
+
+
+def _read_env() -> dict[str, str] | None:
     if not ENV_FILE.is_file():
-        log(f"{ENV_FILE.name} is missing, email not sent")
         return None
     env: dict[str, str] = {}
     for line in ENV_FILE.read_text().splitlines():
@@ -399,6 +422,14 @@ def _env() -> dict[str, str] | None:
             continue
         key, value = line.split("=", 1)
         env[key.strip()] = value.strip().strip("'\"").strip()
+    return env
+
+
+def _env() -> dict[str, str] | None:
+    env = _read_env()
+    if env is None:
+        log(f"{ENV_FILE.name} is missing, email not sent")
+        return None
     if not all(env.get(key) for key in ("RESEND_API_KEY", "RESEND_FROM", "RESEND_TO")):
         log("Resend settings are incomplete, email not sent")
         return None

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
 import time
 import unittest
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -16,6 +18,7 @@ from unittest import mock
 import config
 import jobs
 import mail
+import push
 import update
 from config import ConfigError
 from jobs import HOLD_NOTE, Outcome, apply_update, run, update_floating, update_semver
@@ -758,6 +761,18 @@ class StateTests(unittest.TestCase):
         patcher = mock.patch.object(update, "_deliver", deliver)
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.pushes = []
+        self.push_error: Exception | None = None
+
+        def send_push(bump, topic, server):
+            if self.push_error:
+                raise self.push_error
+            self.pushes.append((bump, topic, server))
+
+        for target, name, value in ((update, "ENV_FILE", self.dir / ".env"), (update.push, "send", send_push)):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def report(self, day: date, notices=(), bumps=(), issues=(), weekly=False) -> int:
         env = {"UPDATE_TODAY": day.isoformat(), "UPDATE_WDAY": str(day.isoweekday())}
@@ -935,7 +950,9 @@ class FailureMailTests(StateTests):
         self.assertNotIn("Uptime Kuma", weekly.text)
 
 
-class MainTests(StateTests):
+class MainCase(StateTests):
+    """update.main with a fake Docker and run(); the tests set self.outcome."""
+
     def setUp(self):
         super().setUp()
         self.docker = FakeDocker({})
@@ -956,6 +973,8 @@ class MainTests(StateTests):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+
+class MainTests(MainCase):
     def test_only_the_weekly_run_prunes(self):
         update.main([])
         self.assertEqual(self.docker.pruned, 0)
@@ -1039,6 +1058,76 @@ class MainTests(StateTests):
         with self.assertRaises(RuntimeError):
             update.main([])
         self.assertFalse(update.LOCK.exists())
+
+
+class PushTests(MainCase):
+    """Each update that held is pushed to ntfy that morning, and still kept for the weekly mail."""
+
+    BUMPS = [
+        Bump("traefik", "3.7.19", "3.7.20", "https://github.com/traefik/traefik/releases/tag/v3.7.20"),
+        Bump("mosquitto", "2.1.4", "2.1.5", "https://hub.docker.com/_/eclipse-mosquitto/tags"),
+    ]
+
+    real_send = staticmethod(push.send)
+
+    def setUp(self):
+        super().setUp()
+        self.outcome.bumps.extend(self.BUMPS)
+        patcher = mock.patch.dict(os.environ, {"UPDATE_TODAY": "2026-11-16", "UPDATE_WDAY": "1"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def env(self, text: str) -> None:
+        (self.dir / ".env").write_text(text)
+
+    def test_every_update_is_pushed_and_kept_for_the_weekly_mail(self):
+        self.env("RESEND_API_KEY=k\nNTFY_TOPIC='secret-topic'\n")
+        self.assertEqual(update.main([]), 0)
+        self.assertEqual(self.pushes, [(bump, "secret-topic", "https://ntfy.sh") for bump in self.BUMPS])
+        self.assertEqual([kept.key for kept in update._load_bumps()], ["traefik", "mosquitto"])
+        self.assertEqual(self.letters, [])
+
+    def test_another_server_can_be_set(self):
+        self.env("NTFY_TOPIC=t\nNTFY_URL=https://ntfy.example.com/\n")
+        update.main([])
+        self.assertEqual({server for _bump, _topic, server in self.pushes}, {"https://ntfy.example.com/"})
+
+    def test_no_topic_or_no_env_file_pushes_nothing(self):
+        update.main([])
+        self.env("RESEND_API_KEY=k\n")
+        update.main([])
+        self.assertEqual(self.pushes, [])
+        self.assertEqual(len(update._load_bumps()), 2)
+
+    def test_a_failed_push_does_not_fail_the_run(self):
+        self.env("NTFY_TOPIC=t\n")
+        self.push_error = RuntimeError("ntfy returned HTTP 429")
+        self.assertEqual(update.main([]), 0)
+        self.assertEqual(len(update._load_bumps()), 2)
+
+    def test_a_dry_run_and_the_sunday_mail_push_nothing(self):
+        self.env("NTFY_TOPIC=t\n")
+        update.main(["--dry-run"])
+        update.main(["--digest"])
+        self.assertEqual(self.pushes, [])
+
+    def test_the_message(self):
+        mail.use_titles(CONFIG.titles)
+        body = push.message(self.BUMPS[0], "t")
+        self.assertEqual(body, {
+            "topic": "t", "title": "Traefik updated", "message": "3.7.19 → 3.7.20", "tags": ["white_check_mark"], "priority": 2,
+            "click": "https://github.com/traefik/traefik/releases/tag/v3.7.20",
+        })
+        self.assertNotIn("click", push.message(Bump("seerr", "v3.5.1", "v3.5.2"), "t"))
+
+    def test_send_posts_the_json_to_the_server_root(self):
+        response = mock.MagicMock(status=200)
+        response.__enter__.return_value = response
+        with mock.patch.object(urllib.request, "urlopen", return_value=response) as urlopen:
+            self.real_send(self.BUMPS[0], "t", "https://ntfy.sh/")
+        request = urlopen.call_args.args[0]
+        self.assertEqual((request.full_url, request.get_method()), ("https://ntfy.sh", "POST"))
+        self.assertEqual(json.loads(request.data)["topic"], "t")
 
 
 class MailTests(unittest.TestCase):
