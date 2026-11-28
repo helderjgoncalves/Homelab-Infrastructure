@@ -1,7 +1,8 @@
 name: homer
 services:
   homer:
-    image: b4bz/homer:latest
+    # Exact version: updates/ asks Workers AI about each release and moves it.
+    image: b4bz/homer:v26.11.4
     container_name: homer
     restart: unless-stopped
     user: 1000:1000

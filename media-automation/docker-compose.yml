@@ -25,6 +25,8 @@
 name: media-automation
 services:
   prowlarr:
+    # linuxserver has no major tag: updates/ holds a new major and asks
+    # Workers AI about it. Dockge's Update would take it unchecked.
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: prowlarr
     restart: unless-stopped
@@ -64,6 +66,8 @@ services:
         max-file: "3"
 
   radarr:
+    # linuxserver has no major tag: updates/ holds a new major and asks
+    # Workers AI about it. Dockge's Update would take it unchecked.
     image: lscr.io/linuxserver/radarr:latest
     container_name: radarr
     restart: unless-stopped
@@ -97,6 +101,8 @@ services:
     logging: *logging
 
   sonarr:
+    # linuxserver has no major tag: updates/ holds a new major and asks
+    # Workers AI about it. Dockge's Update would take it unchecked.
     image: lscr.io/linuxserver/sonarr:latest
     container_name: sonarr
     restart: unless-stopped
@@ -130,6 +136,8 @@ services:
     logging: *logging
 
   qbittorrent:
+    # linuxserver has no major tag: updates/ holds a new major for a hand.
+    # Dockge's Update would take it unchecked.
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
     restart: unless-stopped

@@ -415,7 +415,8 @@ def collect_outside(docker: Docker, config: Config, running: set[str], notices: 
 
     With auto, Workers AI is asked about it the first morning it is seen, and with auto = "on" that run moves the tag.
     """
-    for app in config.apps.values():
+    # The compose container last: moving it recreates the container every other app's compose runs in.
+    for app in sorted(config.apps.values(), key=lambda app: config.compose_container in app.containers):
         if app.policy != "floating" or not app.releases or app.main not in running:
             continue
         try:

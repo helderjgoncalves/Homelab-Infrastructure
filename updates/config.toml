@@ -120,6 +120,9 @@ policy = "floating"
 containers = ["beszel", "beszel-agent"]
 releases = "github:henrygd/beszel"
 tag_prefix = "v"
+auto = "on"
+# The hub's database; the agent keeps nothing that a new major migrates.
+rollback_files = ["/beszel_data"]
 
 [apps.adguard]
 title = "AdGuard Home"
@@ -195,6 +198,8 @@ policy = "floating"
 containers = ["homer"]
 releases = "github:bastienwirtz/homer"
 tag_prefix = "v"
+# Calendar versions, like Home Assistant: the compose file pins the exact one, and Workers AI decides on each release.
+auto = "on"
 
 # media-automation. linuxserver publishes no major tag, so these follow
 # latest with hold_major.
@@ -270,3 +275,5 @@ policy = "floating"
 containers = ["dockge"]
 releases = "github:louislam/dockge"
 version_file = "/app/package.json"
+# It runs every `docker compose`, so it takes no rollback_files: saving them stops the container.
+auto = "on"

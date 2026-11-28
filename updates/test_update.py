@@ -2272,6 +2272,34 @@ class HomeAssistantAutoTests(AutoCase):
         self.assertIn("home-assistant:2026.11.4\n", path.read_text())
 
 
+class RunnerAutoTests(AutoCase):
+    """Dockge runs every `docker compose`, so a major it takes by itself recreates it last, and saves no files: that would stop it."""
+
+    def test_a_major_of_the_compose_runner_moves_its_tag_and_recreates_it(self):
+        path = self.compose_file("dockge", "services:\n  dockge:\n    image: louislam/dockge:1\n")
+        docker = FileDocker({"dockge": Box("louislam/dockge:1", "old", "dockge", "dockge", (str(path),))}, {"louislam/dockge:2": "new"})
+        docker.paths[("dockge", "/app/package.json")] = b'{"version": "1.5.0"}'
+        app = APPS["dockge"]
+        self.assertEqual((app.auto, app.rollback_files), ("on", ()))
+        config = replace(CONFIG, apps={"dockge": app})
+        outcome = Outcome()
+        releases = [noted("1.5.0", 90), noted("2.0.0", 5, "- New look.")]
+        with mock.patch.object(jobs, "github_releases", return_value=releases):
+            jobs.collect_outside(docker, config, set(docker.boxes), outcome.notices, None, self.judge(docker), jobs.Morning(docker, config, False, outcome))
+        self.assertEqual(len(self.asked), 1)
+        self.assertIn("image: louislam/dockge:2\n", path.read_text())
+        self.assertIn(("recreate", "dockge"), docker.calls)
+        self.assertEqual(docker.boxes["dockge"].image_id, "new")
+        self.assertNotIn(("compose", "dockge", "stop", "dockge"), [call[:4] for call in docker.calls])
+
+    def test_the_compose_runner_is_checked_past_its_tag_last(self):
+        seen = []
+        config = replace(CONFIG, apps={"dockge": APPS["dockge"], "homer": APPS["homer"]})
+        with mock.patch.object(jobs, "_outside_notice", lambda _docker, _notices, app, *_args: seen.append(app.key)):
+            jobs.collect_outside(FakeDocker({}), config, {"dockge", "homer"}, [])
+        self.assertEqual(seen, ["homer", "dockge"])
+
+
 class HomeAssistantPatchTests(AutoCase):
     """A patch the 2026.11 tag takes by itself: asked about only when its notes mark a breaking change to something set up."""
 
@@ -2896,10 +2924,10 @@ class AutoConfigTests(unittest.TestCase):
 
     def test_the_shipped_config_says_which_apps_workers_ai_may_install(self):
         modes = {key: app.auto for key, app in APPS.items() if app.auto}
-        self.assertEqual({key for key, mode in modes.items() if mode == "on"}, {"uptime-kuma", "radarr", "sonarr", "prowlarr", "maintainerr", "seerr", "homeassistant"})
+        self.assertEqual({key for key, mode in modes.items() if mode == "on"}, {"uptime-kuma", "radarr", "sonarr", "prowlarr", "maintainerr", "seerr", "homeassistant", "homer", "beszel", "dockge"})
         self.assertEqual({key for key, mode in modes.items() if mode == "shadow"}, {"adguard", "zigbee2mqtt"})
         self.assertEqual([key for key, app in APPS.items() if app.critical and app.auto == "on"], [])
-        for key in ("immich", "traefik", "opencloud-opencloud-1", "mosquitto", "qbittorrent", "beszel", "dockge"):
+        for key in ("immich", "traefik", "opencloud-opencloud-1", "mosquitto", "qbittorrent"):
             self.assertNotIn(key, modes)
         self.assertNotIn("/app/data/configuration.yaml", APPS["zigbee2mqtt"].context_files)
 
