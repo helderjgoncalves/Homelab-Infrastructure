@@ -10,14 +10,14 @@ import os
 import re
 from pathlib import Path
 
-import auto
-import composefile
-import notes
-from config import App, Config
-from mail import Bump, Issue, Notice
-from releases import Firmware, Release, choose, github_releases, hub_tags, latest_stable, newer, normalize_image, parse_version, plex_public, qts_public, wait_note
-from runtime import Container, Docker, DockerError, Stack, log, split_ref
-from verdict import HELD_AI, HELD_BREAKING, Verdict
+from . import auto
+from . import composefile
+from . import notes
+from .config import App, Config
+from .mail import Bump, Issue, Notice
+from .releases import Firmware, Release, choose, github_releases, hub_tags, latest_stable, newer, normalize_image, parse_version, plex_public, qts_public, wait_note
+from .runtime import Container, Docker, DockerError, Stack, log, split_ref
+from .verdict import HELD_AI, HELD_BREAKING, Verdict
 
 KINDS = {
     "floating": "updates this morning if the floating tag moved",

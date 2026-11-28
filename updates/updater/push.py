@@ -7,7 +7,7 @@ import re
 import urllib.error
 import urllib.request
 
-from mail import FOUND, ICONS, Bump, Notice, todo
+from .mail import FOUND, ICONS, Bump, Notice, todo
 
 NTFY_URL = "https://ntfy.sh"
 # The repo is public, so ntfy and the phone can fetch the icons the mail uses.

@@ -7,7 +7,7 @@ import urllib.request
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 
-from releases import USER_AGENT, Release, newer
+from .releases import USER_AGENT, Release, newer
 
 # A body this short goes as it is. A longer one keeps its sections about breaking
 # changes, and from the rest only the lines that mention one.

@@ -17,7 +17,8 @@ from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 
 API = "1.41"
-HERE = Path(__file__).resolve().parent
+# updates/: config.toml, .env, icons/ and state/ sit next to this package.
+HERE = Path(__file__).resolve().parents[1]
 STACKS = HERE.parent
 SOCKET = "/var/run/docker.sock"
 PULL_ATTEMPTS = 3

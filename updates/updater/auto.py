@@ -16,13 +16,13 @@ from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
-import composefile
-import notes
-from composefile import Edit
-from config import App
-from releases import Release, newer
-from runtime import HERE, STACKS, Container, Docker, DockerError, Stack, last_line, log
-from verdict import HELD_AI, HELD_BREAKING, MODEL, Question, Unavailable, Verdict, VerdictError, ask, messages
+from . import composefile
+from . import notes
+from .composefile import Edit
+from .config import App
+from .releases import Release, newer
+from .runtime import HERE, STACKS, Container, Docker, DockerError, Stack, last_line, log
+from .verdict import HELD_AI, HELD_BREAKING, MODEL, Question, Unavailable, Verdict, VerdictError, ask, messages
 
 ROLLBACK = HERE / "state" / "rollback"
 # alpine/git v2.54.1: git for the commit, and a shell to clear files before they are put back.
@@ -49,7 +49,7 @@ def fingerprint(text: str) -> str:
 class Judge:
     """Asks Workers AI about a release once, and again only when what it would be shown has changed.
 
-    update.py keeps the answers in state/verdicts.tsv, each with the fingerprint of what was shown (`prints`; "" for one that
+    main.py keeps the answers in state/verdicts.tsv, each with the fingerprint of what was shown (`prints`; "" for one that
     always holds), and in state/asking.tsv the day a release first could not be asked (`failures`). `asking` is False for the
     Sunday mail and --notify-only: they show the answers already given and ask nothing. `unavailable` says why Workers AI
     can't be asked, when it can't: what it would be asked goes out by hand with that line.

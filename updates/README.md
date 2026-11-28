@@ -112,24 +112,26 @@ In Kuma, add a Push monitor with a heartbeat interval of 90000 seconds (25 hours
 
 ## Layout
 
-The stacks directory is the parent of this folder. Nothing in the Python is pinned to a machine path.
+The stacks directory is the parent of this folder. Nothing in the Python is pinned to a machine path. What you edit and run sits at the top; the code is the `updater/` package, which `update.sh` runs as `python -m updater`.
 
-| File | Role |
+| Path | Role |
 | --- | --- |
 | `update.sh` | Starts the run. Under cron (root) it runs `python:3.14-alpine` as the owner of this script, with the Docker socket and the stacks directory mounted. Then sends the heartbeat. |
 | `config.toml` | The apps, their policy, releases and version sources, and the compose container. |
-| `config.py` | Reads `config.toml`, and refuses anything it does not understand. |
-| `update.py` | Lock, mail timing, weekly state, prune. `--dry-run`, `--check`, `--notify-only`, `--digest`. |
-| `jobs.py` | One path per policy: what is bumped, mailed, or left alone, and the moves `auto` makes. |
-| `auto.py` | What Workers AI is asked about a release, the checks that can only say no, the rollback copies and the commit. |
-| `verdict.py` | The Workers AI request and its answer. |
-| `notes.py` | Release notes and the pages they link, trimmed to breaking changes. |
-| `composefile.py` | A compose file's image line changed with nothing else touched. |
-| `releases.py` | Version rules, GitHub, Docker Hub, the Plex download feed, and QTS Live Update. |
-| `mail.py` | The card mail. |
-| `push.py` | The ntfy push for each update and each release to install by hand. |
-| `runtime.py` | Docker over the socket, API 1.41 or the daemon's minimum if that is newer. Compose runs inside the compose container, with the files from the container labels. |
-| `test_update.py` | The config and its mistakes, the same decisions as before the config, `wait_days`, rollback, Immich, Compose labels, the weekly state, the lock, the prune, release-check failures, and the mail. No Docker. |
+| `icons/` | One `<key>.png` per app, for the mail and the push. The push links them on GitHub, so they stay at this path. |
+| `state/` | What the runs remember, the log and the rollback copies. Gitignored. |
+| `updater/config.py` | Reads `config.toml`, and refuses anything it does not understand. |
+| `updater/main.py` | Lock, mail timing, weekly state, prune. `--dry-run`, `--check`, `--notify-only`, `--digest`. |
+| `updater/jobs.py` | One path per policy: what is bumped, mailed, or left alone, and the moves `auto` makes. |
+| `updater/auto.py` | What Workers AI is asked about a release, the checks that can only say no, the rollback copies and the commit. |
+| `updater/verdict.py` | The Workers AI request and its answer. |
+| `updater/notes.py` | Release notes and the pages they link, trimmed to breaking changes. |
+| `updater/composefile.py` | A compose file's image line changed with nothing else touched. |
+| `updater/releases.py` | Version rules, GitHub, Docker Hub, the Plex download feed, and QTS Live Update. |
+| `updater/mail.py` | The card mail. |
+| `updater/push.py` | The ntfy push for each update and each release to install by hand. |
+| `updater/runtime.py` | Docker over the socket, API 1.41 or the daemon's minimum if that is newer. Compose runs inside the compose container, with the files from the container labels. |
+| `tests/` | One file per module above, and `support.py` with the fake Docker and the shared fixtures. No Docker. |
 
 To add an app, add a table to `config.toml` and an icon as `icons/<key>.png`, then check with `--dry-run`.
 
@@ -141,4 +143,4 @@ updates/update.sh --digest       Sunday mail and prune, no updates
 updates/update.sh --notify-only  mail new releases now, bump nothing
 ```
 
-`python3 -m unittest test_update.py` runs the tests on a machine that has Python.
+`python3 -m unittest discover -s tests -t .`, from this folder, runs the tests on a machine that has Python. CI runs them on every push.

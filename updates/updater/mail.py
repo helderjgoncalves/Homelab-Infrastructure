@@ -10,10 +10,10 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from verdict import HELD_AI, HELD_BREAKING
+from .verdict import HELD_AI, HELD_BREAKING
 
 FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif"
-ICONS = Path(__file__).resolve().parent / "icons"
+ICONS = Path(__file__).resolve().parents[1] / "icons"
 # One sentence on who found breaking changes, after "install it by hand".
 FOUND = {HELD_AI: "Breaking changes detected by AI.", HELD_BREAKING: "Breaking changes detected in the notes."}
 DARK = """

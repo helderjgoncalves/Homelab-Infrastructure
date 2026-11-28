@@ -8,8 +8,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from releases import normalize_image
-from runtime import HERE
+from .releases import normalize_image
+from .runtime import HERE
 
 PATH = HERE / "config.toml"
 POLICIES = ("floating", "semver", "report")

@@ -83,7 +83,7 @@ heartbeat() {
 }
 
 if [ "$(id -u)" -ne 0 ] && command -v python3 >/dev/null 2>&1; then
-  python3 "$here/update.py" "$@"
+  python3 -m updater "$@"
 else
   "$docker_bin" run --rm \
     --user "$run_uid:$run_gid" \
@@ -100,7 +100,7 @@ else
     -v "$stacks:$stacks" \
     -w "$here" \
     python:3.14-alpine \
-    python "$here/update.py" "$@"
+    python -m updater "$@"
 fi
 code=$?
 heartbeat "$code" "$@"

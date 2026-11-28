@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from releases import normalize_image
-from runtime import split_ref
+from .releases import normalize_image
+from .runtime import split_ref
 
 TOP = re.compile(r"services:[ \t]*(#.*)?")
 KEY = re.compile(r"[\"']?([^\"'\s:#][^\"':]*?)[\"']?:[ \t]*(#.*)?")

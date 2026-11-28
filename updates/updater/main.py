@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
 """Container updates.
 
-The stacks directory is the parent of this file. Nothing here is pinned to a
+The stacks directory is the parent of updates/. Nothing here is pinned to a
 machine path.
 
   updates/update.sh                update at 09:00, push each update and each new release to install by hand
@@ -23,13 +22,13 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import push
-from auto import Judge
-from config import Config, ConfigError, load as load_config
-from jobs import Outcome, collect_notices, explain, run
-from mail import Bump, Issue, pinned_letter, send, use_titles
-from runtime import HERE, Docker, DockerError, log, split_ref
-from verdict import Verdict, configured
+from . import push
+from .auto import Judge
+from .config import Config, ConfigError, load as load_config
+from .jobs import Outcome, collect_notices, explain, run
+from .mail import Bump, Issue, pinned_letter, send, use_titles
+from .runtime import HERE, Docker, DockerError, log, split_ref
+from .verdict import Verdict, configured
 
 STATE = HERE / "state"
 NOTIFIED = STATE / "notified.tsv"
@@ -663,10 +662,3 @@ def _stop(signum, _frame) -> None:
     # Python is PID 1 in the container; without a handler SIGTERM is ignored and the lock is left behind.
     raise SystemExit(128 + signum)
 
-
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main(sys.argv[1:]))
-    except DockerError as exc:
-        log(str(exc))
-        raise SystemExit(1)

@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field, replace
 
-from releases import USER_AGENT
+from .releases import USER_AGENT
 
 ENDPOINT = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1/chat/completions"
 # Free tier, zero data retention, a 128k context for long notes.
