@@ -25,6 +25,7 @@ LINE = re.compile(
     re.I,
 )
 LINK = re.compile(r"\[([^\]]+)\]\((https://[^)\s]+)\)")
+DEFINITION = re.compile(r"^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*\S+.*$", re.M)
 BARE = re.compile(r"https://[^\s<>()\[\]\"'`]+")
 LINKED = re.compile(r"release notes|migration guide|upgrade guide|upgrading|breaking", re.I)
 # What a rollback can't take back. Each match is shown with its whole sentence.
@@ -156,6 +157,9 @@ def page_text(html: str, fragment: str = "") -> str:
 def named(text: str, terms, pattern: str = "{}") -> list[str]:
     """The terms the text names. `pattern` is how it names one, `{}` the term: `/integrations/{}/`. The default is the term as a whole word."""
     found = []
+    # A link's definition (`[zha docs]: …/integrations/zha/`) names what every line of the notes links, fixes too, and is kept only
+    # in notes short enough not to be trimmed.
+    text = DEFINITION.sub("", text)
     for term in sorted(set(terms)):
         if pattern == "{}":
             hit = re.search(rf"(?<![\w-]){re.escape(term)}(?![\w-])", text) is not None

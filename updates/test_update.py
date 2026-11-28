@@ -2295,6 +2295,12 @@ class HomeAssistantPatchTests(AutoCase):
         self.assertEqual(self.docker.boxes["homeassistant"].image_id, "new")
         self.assertEqual(outcome.bumps[0].reason, "Only fixes.")
 
+    def test_short_notes_with_their_link_definitions_are_asked_about_too(self):
+        outcome = self.update("- Rename a ZHA sensor ([@a] - [#4]) ([zha docs]) (breaking-change)\n\n"
+                              "[zha docs]: https://www.home-assistant.io/integrations/zha/\n[mqtt docs]: https://www.home-assistant.io/integrations/mqtt/")
+        self.assertEqual(len(self.asked), 1)
+        self.assertEqual(outcome.bumps[0].reason, "Only fixes.")
+
     def test_a_breaking_change_to_home_assistant_itself_is_asked_about_and_can_stay_by_hand(self):
         self.answer = Verdict("manual", ("Scripts that loop forever now stop.",))
         outcome = self.update("- Stop scripts that loop more than 10000 times ([@a] - [#5]) (breaking-change)")
@@ -2638,6 +2644,7 @@ class NotesTests(unittest.TestCase):
     def test_named_terms_and_compose_terms(self):
         text = "Removed `--providers.docker.swarmMode`; see /integrations/zha/. PUID is unchanged."
         self.assertEqual(notes.named(text, ["zha", "mqtt"], "/integrations/{}/"), ["zha"])
+        self.assertEqual(notes.named("- Fix ([mqtt docs])\n\n[mqtt docs]: https://www.home-assistant.io/integrations/mqtt/", ["mqtt"], "/integrations/{}/"), [])
         block = "  app:\n    command:\n      - --providers.docker.swarmMode=true\n    environment:\n      - PUID=1000\n      TZ: x\n"
         terms = notes.compose_terms(block)
         self.assertTrue({"--providers.docker.swarmMode", "providers.docker.swarmMode", "PUID", "TZ"} <= terms)
