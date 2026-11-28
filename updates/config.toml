@@ -142,6 +142,9 @@ releases = "github:home-assistant/core"
 # Calendar versions: a patch can break things as well as a new month. The compose file pins the exact version, so
 # every release is past the tag and Workers AI decides on each one.
 auto = "on"
+# The newest release must be 3 days old, so a quick fix of a .0 comes first. With the exact pin each release is its own
+# line: a newer one starts the count again, and Home Assistant's weekly patches would outrun a longer wait.
+wait_days = 3
 linked_notes = true
 # Only the domain of each integration set up goes to Workers AI.
 inventory_file = "/config/.storage/core.config_entries"

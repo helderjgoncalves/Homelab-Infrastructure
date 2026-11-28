@@ -2193,7 +2193,7 @@ class HomeAssistantAutoTests(AutoCase):
         self.docker.paths[("homeassistant", "/config/automations.yaml")] = b"- triggers:\n  - trigger: sun\n"
         self.docker.paths[("homeassistant", "/config/scripts.yaml")] = b""
         self.releases = [noted("2026.11.3", 40), noted("2026.12.0", 9, f"Read the [release notes]({self.BLOG})."), noted("2026.12.1", 2)]
-        self.app = replace(APPS["homeassistant"], auto="on", rollback_files=())
+        self.app = replace(APPS["homeassistant"], auto="on", rollback_files=(), wait_days=0)
         self.config = replace(CONFIG, apps={**APPS, "homeassistant": self.app})
 
     def collect(self, page: str) -> Outcome:
@@ -2261,7 +2261,11 @@ class HomeAssistantAutoTests(AutoCase):
             {"old": "2026.11.3", "new": "2026.11.4"},
         )
         self.docker.paths.update(paths)
+        self.app = replace(self.app, wait_days=APPS["homeassistant"].wait_days)
+        self.config = replace(CONFIG, apps={**APPS, "homeassistant": self.app})
         self.releases = [noted("2026.11.3", 40), noted("2026.11.4", 2, "- Fix a thing.")]
+        self.assertEqual((self.collect("").bumps, self.asked), ([], []))
+        self.releases[1] = noted("2026.11.4", 3, "- Fix a thing.")
         outcome = self.collect("")
         self.assertEqual(len(self.asked), 1)
         self.assertEqual([(bump.before, bump.after) for bump in outcome.bumps], [("2026.11.3", "2026.11.4")])
@@ -2285,7 +2289,8 @@ class HomeAssistantPatchTests(AutoCase):
         self.docker.paths[("homeassistant", "/config/.storage/core.config_entries")] = json.dumps(entries).encode()
         for name in ("configuration", "automations", "scripts"):
             self.docker.paths[("homeassistant", f"/config/{name}.yaml")] = b""
-        self.app = replace(APPS["homeassistant"], auto="on", linked_notes=False, rollback_files=(), breaking_marker="(breaking-change)", breaking_names="[{} docs]")
+        self.app = replace(APPS["homeassistant"], auto="on", linked_notes=False, rollback_files=(), breaking_marker="(breaking-change)", breaking_names="[{} docs]",
+                           wait_days=0)
 
     def update(self, line: str, judge: auto.Judge | None = None) -> Outcome:
         outcome = Outcome()
@@ -2838,8 +2843,8 @@ class AutoConfigTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.rejects(text, message)
 
-    def test_only_immich_waits(self):
-        self.assertEqual({key: app.wait_days for key, app in APPS.items() if app.wait_days}, {"immich": 7})
+    def test_immich_and_home_assistant_wait(self):
+        self.assertEqual({key: app.wait_days for key, app in APPS.items() if app.wait_days}, {"immich": 7, "homeassistant": 3})
 
     def test_photos_dns_and_ingress_are_critical(self):
         self.assertEqual({key for key, app in APPS.items() if app.critical}, {"immich", "adguard", "traefik"})
@@ -2848,8 +2853,9 @@ class AutoConfigTests(unittest.TestCase):
         hand = "emailed, installed by hand"
         shadow = "emailed with Workers AI's verdict (shadow), installed by hand"
         asked = "Workers AI is asked: by itself if nothing needs doing by hand, else emailed"
+        waited = "Workers AI is asked, 3 days after it is out: by itself if nothing needs doing by hand, else emailed"
         cases = [
-            ("homeassistant", "2026.11.3", [("patch", asked), ("minor", asked), ("major", asked)]),
+            ("homeassistant", "2026.11.3", [("patch", waited), ("minor", waited), ("major", waited)]),
             ("zigbee2mqtt", "2.14", [("patch", "by itself"), ("minor", shadow), ("major", shadow)]),
             ("radarr", "latest", [("patch", "by itself"), ("minor", "by itself"), ("major", asked)]),
             ("traefik", "v3", [("patch", "by itself"), ("minor", "by itself"), ("major", hand)]),
