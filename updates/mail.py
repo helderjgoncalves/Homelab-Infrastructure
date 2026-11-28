@@ -10,8 +10,12 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from verdict import HELD_AI, HELD_BREAKING
+
 FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif"
 ICONS = Path(__file__).resolve().parent / "icons"
+# One sentence on who found breaking changes, after "install it by hand".
+FOUND = {HELD_AI: "Breaking changes detected by AI.", HELD_BREAKING: "Breaking changes detected in the notes."}
 DARK = """
 .m-bg { background: #0e131c !important; }
 .m-card { background: #161d2c !important; border-color: #2a3242 !important; }
@@ -20,7 +24,21 @@ DARK = """
 .m-accent { color: #6fa3da !important; }
 .m-rule { border-top-color: #2a3242 !important; }
 .m-bad { color: #ffb4a2 !important; }
+.m-warn { background: #3a2a12 !important; color: #ffc26b !important; }
+.m-info { background: #1d2b40 !important; color: #8fbaf0 !important; }
+.m-quiet { background: #2a3242 !important; color: #a9b3c4 !important; }
+.m-ok { background: #12301d !important; color: #7ddc9b !important; }
 """
+# On a phone the version moves under the name, so the text gets the whole width.
+PHONE = """
+.m-value { display: none !important; }
+.m-phone { display: block !important; max-height: none !important; overflow: visible !important; }
+.m-name { padding-right: 0 !important; }
+"""
+# A flag such as --api.dashboard.enabled stays on one line.
+FLAG = re.compile(r"(?<![\w-])(--?[A-Za-z][\w.=-]*)")
+# A tag's (background, text) in light mode; its class sets dark mode.
+TONES = {"m-warn": ("#fff1db", "#8a5300"), "m-info": ("#e8f1fb", "#2f5f94"), "m-quiet": ("#eef1f5", "#54627a"), "m-ok": ("#e6f6ec", "#1f7a3f")}
 
 # The updater's own rows. The apps' titles come from config.toml through use_titles.
 TITLES = {
@@ -42,10 +60,62 @@ class Notice:
     url: str
     # False for a minor that only waits out its first week and then installs by itself.
     by_hand: bool = True
+    # What Workers AI said (auto in config.toml): "manual", "shadow" (it would have gone in by itself), "auto" (it goes in the
+    # next morning), "wait" (it is asked once its line is wait_days old), "pending" (no answer yet, asked again the next
+    # morning), or "" when it is not asked.
+    verdict: str = ""
+    reasons: tuple[str, ...] = ()
+    actions: tuple[str, ...] = ()
+    # Sent by hand before Workers AI could answer (no tokens, or no answer for a few mornings): its answer is pushed later.
+    unanswered: bool = False
+    # HELD_AI or HELD_BREAKING when that is why it is held, for the sentence in FOUND.
+    held: str = ""
 
     @property
     def title(self) -> str:
         return TITLES.get(self.key, self.key)
+
+    @property
+    def tag(self) -> tuple[str, str]:
+        """A short tag after the name in the mail, with its tone: why it waits for a hand."""
+        if self.verdict == "manual" and self.held == HELD_AI:
+            return "Breaking · AI", "m-warn"
+        if self.verdict == "manual" and self.held == HELD_BREAKING:
+            return "Breaking", "m-warn"
+        if self.unanswered:
+            return "Not checked", "m-quiet"
+        if self.verdict == "shadow":
+            return "Shadow", "m-info"
+        return "", ""
+
+    @property
+    def note(self) -> str:
+        """The line under the name in the HTML mail; the tag and the steps say the rest."""
+        if self.verdict == "manual":
+            return " ".join(self.reasons)
+        if self.verdict == "shadow":
+            return f"Would have gone in by itself. {' '.join(self.reasons)}".strip()
+        return self.detail
+
+    @property
+    def detail(self) -> str:
+        reasons = " ".join(self.reasons)
+        if self.verdict == "shadow":
+            return f"Would have gone in by itself (shadow mode). {reasons}".strip()
+        if self.verdict == "auto":
+            return f"Goes in by itself the next morning. {reasons}".strip()
+        if self.verdict == "wait":
+            return "Checked once its line is old enough (wait_days)."
+        if self.verdict == "pending":
+            return "Workers AI has not answered yet; it is asked again the next morning."
+        if self.verdict == "manual":
+            return " ".join(part for part in ("By hand.", FOUND.get(self.held, ""), reasons) if part) + todo(self.actions)
+        return ""
+
+
+def todo(actions: tuple[str, ...]) -> str:
+    """The steps Workers AI listed, as one sentence after the reasons."""
+    return f" To do: {'; '.join(action.rstrip('.') for action in actions)}." if actions else ""
 
 
 @dataclass(frozen=True)
@@ -64,10 +134,21 @@ class Bump:
     before: str
     after: str
     url: str = ""
+    # What Workers AI said when it let a release past its tag or a held major go in by itself (auto in config.toml); the
+    # mail shows only that it did, the journal keeps what it said.
+    reason: str = ""
 
     @property
     def title(self) -> str:
         return TITLES.get(self.key, self.key)
+
+    @property
+    def detail(self) -> str:
+        return "Safe, checked by AI." if self.reason else ""
+
+    @property
+    def tag(self) -> tuple[str, str]:
+        return ("Safe · AI", "m-ok") if self.reason else ("", "")
 
 
 @dataclass(frozen=True)
@@ -108,9 +189,11 @@ def pinned_letter(notices: list[Notice], bumps: list[Bump] | None = None, issues
     if done:
         lines.append("Updated")
         blocks.append(_label("Updated") if several else "")
-        blocks.append(_table([(bump.key, bump.title, _bump_value(bump)) for bump in done]))
+        blocks.append(_table([(bump.key, bump.title, _bump_value(bump), "", bump.tag, ()) for bump in done]))
         for bump in done:
             lines.append(f"{bump.title}  {_bump_detail(bump)}")
+            if bump.detail:
+                lines.append(f"  {bump.detail}")
             if bump.url:
                 lines.append(f"  {bump.url}")
         lines.append("")
@@ -118,11 +201,14 @@ def pinned_letter(notices: list[Notice], bumps: list[Bump] | None = None, issues
         lines.append("Newer releases")
         blocks.append(_label("Newer releases") if several else "")
         blocks.append(_table([
-            (notice.key, notice.title, f"{_escape(notice.running)} {_arrow()} {_link(notice.url, notice.available)}")
+            (notice.key, notice.title, f"{_escape(notice.running)} {_arrow()} {_link(notice.url, notice.available)}", notice.note,
+             notice.tag, notice.actions)
             for notice in notices
         ]))
         for notice in notices:
             lines.append(f"{notice.title}  {notice.running} → {notice.available}")
+            if notice.detail:
+                lines.append(f"  {notice.detail}")
             lines.append(f"  {notice.url}")
         lines.append("")
     if failed:
@@ -173,6 +259,7 @@ def send(letter: Letter, env: dict[str, str]) -> None:
 
 def _page(subject: str, eyebrow: str, eyebrow_class: str, eyebrow_color: str, title: str, intro: str, body: str) -> str:
     dark = DARK.replace("\n", "\n    ")
+    phone = PHONE.replace("\n", "\n    ")
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -185,6 +272,9 @@ def _page(subject: str, eyebrow: str, eyebrow_class: str, eyebrow_color: str, ti
   :root {{ color-scheme: light dark; supported-color-schemes: light dark; }}
   @media (prefers-color-scheme: dark) {{
     {dark}
+  }}
+  @media (max-width: 480px) {{
+    {phone}
   }}
 </style>
 </head>
@@ -214,19 +304,49 @@ def _label(text: str) -> str:
     )
 
 
-def _table(rows: list[tuple[str, str, str]]) -> str:
+def _table(rows: list[tuple]) -> str:
+    """(icon key, name, value, detail[, (tag, tone), steps]): the detail is a quiet line under the name, such as why a release
+    waits for a hand, and the steps a short list under it."""
     body = []
     last = len(rows) - 1
-    for index, (key, name, value) in enumerate(rows):
+    for index, (key, name, value, detail, *more) in enumerate(rows):
+        (tag, tone), steps = more if more else (("", ""), ())
         border = "" if index == last else "border-bottom:1px solid #e3e8ef;"
+        badge = (
+            f'<span class="{tone}" style="display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:11px;'
+            f'line-height:1.5;font-weight:600;vertical-align:1px;background:{TONES[tone][0]};color:{TONES[tone][1]}">{_escape(tag)}</span>'
+            if tag else ""
+        )
+        under = (
+            f'<div class="m-muted" style="margin-top:3px;font-size:13px;line-height:1.4;font-weight:400;color:#54627a">{_flags(detail)}</div>'
+            if detail else ""
+        )
+        listed = "".join(
+            f'<div class="m-text" style="margin-top:4px;padding-left:14px;text-indent:-14px;font-size:13px;line-height:1.4;font-weight:400;color:#1c2330">'
+            f'<span class="m-muted" style="color:#7a879c">&#8226;&nbsp;&nbsp;</span>{_flags(step.rstrip("."))}</div>'
+            for step in steps
+        )
+        if listed:
+            listed = (
+                '<div class="m-muted" style="margin-top:8px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;'
+                f'color:#7a879c">To do</div>{listed}'
+            )
+        phone = (
+            '<div class="m-phone m-muted" style="display:none;max-height:0;overflow:hidden;mso-hide:all;margin-top:2px;font-size:13px;'
+            f'line-height:1.4;font-weight:400;color:#54627a">{value}</div>'
+        )
         body.append(
             "<tr>"
             + _icon_cell(key, border)
-            + f'<td class="m-text m-rule" style="padding:11px 16px 11px 0;{border}font-size:14px;line-height:1.4;font-weight:700;color:#1c2330">{_escape(name)}</td>'
-            + f'<td class="m-text m-rule" align="right" style="padding:11px 0;{border}font-size:14px;line-height:1.4;color:#1c2330;white-space:nowrap">{value}</td>'
+            + f'<td class="m-text m-rule m-name" valign="top" style="padding:11px 16px 11px 0;{border}font-size:14px;line-height:1.4;font-weight:700;color:#1c2330">{_escape(name)}{badge}{phone}{under}{listed}</td>'
+            + f'<td class="m-text m-rule m-value" align="right" valign="top" style="padding:11px 0;{border}font-size:14px;line-height:1.4;color:#1c2330;white-space:nowrap">{value}</td>'
             + "</tr>"
         )
     return f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{"".join(body)}</table>'
+
+
+def _flags(text: str) -> str:
+    return FLAG.sub(r'<span style="white-space:nowrap">\1</span>', _escape(text))
 
 
 def _failure_table(issues: list[Issue]) -> str:
@@ -238,7 +358,7 @@ def _failure_table(issues: list[Issue]) -> str:
             "<tr>"
             + _icon_cell(issue.name, border)
             + f'<td class="m-text m-rule" style="padding:11px 0;{border}">'
-            + f'<div style="font-size:14px;line-height:1.4;font-weight:700;color:#1c2330">{_escape(issue.title)}</div>'
+            + f'<div class="m-text" style="font-size:14px;line-height:1.4;font-weight:700;color:#1c2330">{_escape(issue.title)}</div>'
             + f'<div class="m-bad" style="margin-top:3px;font-size:13px;line-height:1.4;color:#9a3412">{_escape(issue.detail)}</div>'
             + "</td></tr>"
         )
@@ -249,7 +369,7 @@ def _icon_cell(key: str, border: str) -> str:
     if not (ICONS / f"{key}.png").is_file():
         return ""
     return (
-        f'<td width="34" valign="middle" style="width:34px;padding:8px 10px 8px 0;{border}">'
+        f'<td width="34" valign="top" style="width:34px;padding:9px 10px 8px 0;{border}">'
         f'<img src="cid:{key}" width="24" height="24" alt="" '
         'style="display:block;width:24px;height:24px;border:0;border-radius:6px;"></td>'
     )

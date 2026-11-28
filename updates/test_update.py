@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
+import re
 import shutil
+import stat
 import tempfile
 import time
 import unittest
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
@@ -15,11 +19,17 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+import auto
+import composefile
 import config
 import jobs
 import mail
+import notes
 import push
+import runtime
 import update
+import verdict
+from verdict import HELD_AI, HELD_BREAKING, Verdict, VerdictError
 from config import ConfigError
 from jobs import HOLD_NOTE, Outcome, apply_update, run, update_floating, update_semver
 from mail import Bump, Issue, Notice, failure_letter, pinned_letter
@@ -28,6 +38,7 @@ from runtime import Container, DockerError, Stack, api_prefix, stack_of, unused_
 from update import Kept, digest_due, merge_bumps
 
 NOW = datetime(2026, 11, 12, tzinfo=timezone.utc)
+WEEK = timedelta(days=7)
 SUNDAY = date(2026, 11, 15)
 CONFIG = config.load()
 APPS = CONFIG.apps
@@ -173,17 +184,22 @@ class ChooseTests(unittest.TestCase):
         self.assertIsNone(waiting)
 
     def test_new_minor_waits_a_week(self):
-        tag, waiting = choose("v3.4.1", [release("v3.5.0", 6)], NOW)
+        tag, waiting = choose("v3.4.1", [release("v3.5.0", 6)], NOW, wait=WEEK)
         self.assertIsNone(tag)
         self.assertEqual(waiting.tag, "v3.5.0")
 
     def test_new_minor_is_taken_after_a_week(self):
-        tag, waiting = choose("3.4.1", [release("v3.5.0", 7)], NOW)
+        tag, waiting = choose("3.4.1", [release("v3.5.0", 7)], NOW, wait=WEEK)
         self.assertEqual(tag, "v3.5.0")
         self.assertIsNone(waiting)
 
+    def test_with_no_wait_a_new_minor_is_taken_that_morning(self):
+        undated = Release((3, 5, 0), "v3.5.0", None)
+        self.assertEqual(choose("v3.4.1", [release("v3.5.0", 0)], NOW), ("v3.5.0", None))
+        self.assertEqual(choose("v3.4.1", [undated], NOW), ("v3.5.0", None))
+
     def test_patch_of_a_new_minor_does_not_wait(self):
-        tag, _waiting = choose("v3.4.1", [release("v3.5.0", 1), release("v3.5.1", 0)], NOW)
+        tag, _waiting = choose("v3.4.1", [release("v3.5.0", 1), release("v3.5.1", 0)], NOW, wait=WEEK)
         self.assertEqual(tag, "v3.5.1")
 
     def test_a_newer_major_is_held_and_prereleases_are_ignored(self):
@@ -193,9 +209,9 @@ class ChooseTests(unittest.TestCase):
         self.assertEqual(choose("v3.7.18", [release("v2.9.0", 1)], NOW), (None, None))
 
     def test_a_waiting_minor_is_named_before_a_new_major(self):
-        tag, waiting = choose("v3.4.1", [release("v3.4.2", 0), release("v3.5.0", 1), release("v4.0.0", 0)], NOW)
+        tag, waiting = choose("v3.4.1", [release("v3.4.2", 0), release("v3.5.0", 1), release("v4.0.0", 0)], NOW, wait=WEEK)
         self.assertEqual((tag, waiting.tag), ("v3.4.2", "v3.5.0"))
-        tag, waiting = choose("v3.4.1", [release("v3.5.0", 8), release("v4.0.0", 0)], NOW)
+        tag, waiting = choose("v3.4.1", [release("v3.5.0", 8), release("v4.0.0", 0)], NOW, wait=WEEK)
         self.assertEqual((tag, waiting.tag), ("v3.5.0", "v4.0.0"))
 
     def test_a_pinned_minor_takes_patches_and_holds_back_any_newer_minor(self):
@@ -962,7 +978,7 @@ class MainCase(StateTests):
         for name, value in (
             ("Docker", lambda: self.docker),
             ("run", self.run),
-            ("collect_notices", lambda *_args: None),
+            ("collect_notices", lambda *_args, **_kwargs: None),
         ):
             patcher = mock.patch.object(update, name, value)
             patcher.start()
@@ -1008,7 +1024,7 @@ class MainTests(MainCase):
         self.assertFalse(update.PRUNE_ERROR.is_file())
 
     def test_a_stopped_run_keeps_what_already_moved(self):
-        def stopped(_docker, _config, _dry, _rejected, outcome):
+        def stopped(_docker, _config, _dry, _rejected, outcome, _judge=None):
             outcome.bumps.append(Bump("traefik", "v3.7.18", "v3.7.19"))
             outcome.rejected.append(("uptime-kuma", "sha256:bad"))
             raise SystemExit(143)
@@ -1186,14 +1202,46 @@ class ReleasePushTests(MainCase):
 
     def test_the_weekly_mail_clears_what_was_pushed(self):
         update.main([])
-        self.assertEqual(update._pushed(), {("radarr", "7.0.3.10918")})
+        self.assertEqual(update._pushed(), {("radarr", "7.0.3.10918"): ""})
         update._remember_notices([self.RADARR])
         update.main([])
-        self.assertEqual((update._pushed(), self.pushed()), (set(), [self.RADARR]))
+        self.assertEqual((update._pushed(), self.pushed()), ({}, [self.RADARR]))
+
+    def test_a_release_pushed_before_workers_ai_answered_is_pushed_once_more_with_the_answer(self):
+        waiting = replace(self.RADARR, verdict="manual", reasons=("Workers AI was not asked: it has no tokens left today (HTTP 429).",), unanswered=True)
+        self.outcome.notices[:] = [waiting]
+        update.main([])
+        self.assertEqual(update._pushed(), {("radarr", "7.0.3.10918"): "unanswered"})
+        update.main([])
+        update._remember_notices([waiting])
+        answered = replace(self.RADARR, verdict="manual", reasons=("The database is migrated.",), actions=("Back up the database",))
+        self.outcome.notices[:] = [answered]
+        update.main([])
+        update.main([])
+        self.assertEqual(self.pushed(), [waiting, answered])
+        self.assertIn("The database is migrated.", push.message(self.pushed()[1], "t")["message"])
+
+    def test_an_unanswered_release_is_forgotten_once_a_newer_one_is_listed(self):
+        self.outcome.notices[:] = [replace(self.RADARR, unanswered=True)]
+        update.main([])
+        self.outcome.notices[:] = []
+        update.main([])
+        self.assertEqual(update._pushed(), {("radarr", "7.0.3.10918"): "unanswered"})
+        self.outcome.notices[:] = [replace(self.RADARR, available="7.0.4.11000")]
+        update.main([])
+        self.assertEqual(update._pushed(), {("radarr", "7.0.4.11000"): ""})
+
+    def test_an_unanswered_release_left_out_of_the_sunday_mail_is_not_pushed_again(self):
+        self.outcome.notices[:] = [replace(self.RADARR, unanswered=True)]
+        update.main([])
+        with mock.patch.object(update, "collect_notices", lambda *_args, **_kwargs: None):
+            update.main(["--digest"])
+        update.main([])
+        self.assertEqual(len(self.pushes), 1)
 
     def test_a_release_first_seen_on_sunday_is_pushed_and_mailed(self):
         self.outcome.notices.clear()
-        with mock.patch.object(update, "collect_notices", lambda _docker, _config, _running, notices: notices.append(self.RADARR)):
+        with mock.patch.object(update, "collect_notices", lambda _docker, _config, _running, notices, _judge=None: notices.append(self.RADARR)):
             update.main(["--digest"])
         self.assertEqual(self.pushed(), [self.RADARR])
         self.assertEqual(len(self.letters), 1)
@@ -1446,8 +1494,8 @@ class SameAsBeforeConfigTests(unittest.TestCase):
 
     def test_steps_run_in_the_same_order_and_dockge_last(self):
         order = []
-        with mock.patch.object(jobs, "update_floating", lambda *args: order.append(args[-1].key)), \
-                mock.patch.object(jobs, "update_semver", lambda *args: order.append(args[-1].key)), \
+        with mock.patch.object(jobs, "update_floating", lambda *args, **_kwargs: order.append(args[-1].key)), \
+                mock.patch.object(jobs, "update_semver", lambda *args, **_kwargs: order.append(args[-1].key)), \
                 mock.patch.object(jobs, "collect_pinned", lambda *args: order.append("pinned")), \
                 mock.patch.object(jobs, "collect_outside", lambda *args: order.append("outside")):
             run(FakeDocker({}), CONFIG, False)
@@ -1693,6 +1741,1259 @@ class ComposeLabelTests(unittest.TestCase):
         self.assertEqual([bump.key for bump in outcome.bumps], ["traefik", "dockge"])
         ups = [call for call in docker.calls if call[0] in ("recreate",) or call[:3] == ("compose", "traefik", "up")]
         self.assertEqual(ups, [("compose", "traefik", "up", "-d", "--pull", "never", "--no-deps", "traefik"), ("recreate", "dockge")])
+
+
+IMAGE_LINE = re.compile(r"^[ \t]*image:[ \t]*[\"']?([^\s\"'#]+)", re.M)
+
+
+class FileDocker(FakeDocker):
+    """Compose reads each service's image from its compose file, as on the NAS. Rollback copies are real files."""
+
+    def __init__(self, boxes: dict[str, Box], remote: dict[str, str] | None = None, versions: dict[str, str] | None = None):
+        super().__init__(boxes, remote, versions)
+        self.ran: list[tuple] = []
+        # What `git status --porcelain` prints: "" when the compose files are as committed.
+        self.status = ""
+        self.statuses: list[list[str]] = []
+        self.run_code = 0
+        self.paths: dict[tuple[str, str], bytes] = {}
+        self.configs = 0
+        self.config_hook = None
+        self.unpullable: set[str] = set()
+
+    def _services(self, stack: Stack) -> dict[str, dict]:
+        services = {}
+        for path in stack.files:
+            text = Path(path).read_text()
+            for box in self.boxes.values():
+                found = composefile.block(text, box.service) if box.project == stack.project else ""
+                match = IMAGE_LINE.search(found)
+                if match:
+                    services[box.service] = {"image": match.group(1), "rest": IMAGE_LINE.sub("", found)}
+        return services
+
+    def compose(self, stack: Stack, *args: str) -> None:
+        for service, resolved in self._services(stack).items():
+            for box in self.boxes.values():
+                if box.project == stack.project and box.service == service:
+                    box.image = resolved["image"]
+        super().compose(stack, *args)
+
+    def compose_config(self, stack: Stack) -> dict:
+        self.calls.append(("config", stack.project))
+        self.configs += 1
+        resolved = {"services": self._services(stack)}
+        return self.config_hook(self.configs, resolved) if self.config_hook else resolved
+
+    def read_file(self, name: str, path: str) -> bytes:
+        if (name, path) in self.paths:
+            return self.paths[(name, path)]
+        return super().read_file(name, path)
+
+    def archive_to(self, name: str, path: str, target: Path) -> bool:
+        self.calls.append(("archive_to", name, path))
+        if (name, path) not in self.archives:
+            return False
+        target.write_bytes(self.archives[(name, path)])
+        return True
+
+    def put_archive_file(self, name: str, path: str, source: Path) -> None:
+        self.calls.append(("put_archive_file", name, path))
+        self.archives[(name, path)] = source.read_bytes()
+
+    def ensure_image(self, image: str) -> None:
+        self.calls.append(("ensure_image", image))
+        if image in self.unpullable:
+            raise DockerError(f"pull of {image} failed")
+
+    def run_once(self, image: str, cmd: list[str], **options) -> tuple[int, str]:
+        if "status" in cmd:
+            self.statuses.append(cmd)
+            return 0, self.status
+        self.ran.append((image, cmd, options))
+        if options.get("entrypoint") == ["rm"]:
+            for container in options.get("volumes_from") or []:
+                for path in cmd[2:]:
+                    self.archives.pop((container, path), None)
+        return self.run_code, "" if self.run_code == 0 else "fatal: boom"
+
+
+def noted(tag: str, days_ago: int, text: str = "") -> Release:
+    return replace(release(tag, days_ago, now=datetime.now(timezone.utc)), notes=text)
+
+
+class AutoCase(unittest.TestCase):
+    """Workers AI answers what self.answer says; the stacks checkout is a temporary folder."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.asked: list[verdict.Question] = []
+        self.answer: Verdict | Exception = Verdict("auto", ("Only fixes.",))
+
+        def ask(question, env):
+            self.asked.append(question)
+            if isinstance(self.answer, Exception):
+                raise self.answer
+            return self.answer
+
+        for target, name, value in ((auto, "STACKS", self.dir), (auto, "ROLLBACK", self.dir / "rollback"), (auto, "ask", ask)):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def compose_file(self, project: str, text: str) -> Path:
+        path = self.dir / project / "docker-compose.yml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def judge(self, docker, known=None, asking: bool = True) -> auto.Judge:
+        return auto.Judge(docker, {}, known or {}, asking, journal=self.dir / "journal")
+
+    def journal(self) -> list[dict]:
+        return [json.loads(line) for path in sorted((self.dir / "journal").glob("*.jsonl")) for line in path.read_text().splitlines()]
+
+
+TRAEFIK_COMPOSE = """services:
+  traefik:
+    # A new major is mailed, moved to by hand.
+    image: "traefik:v3"   # the major it follows
+    command:
+      - --api.dashboard=true
+    environment:
+      TZ: Europe/Lisbon
+"""
+TRAEFIK_URL = "https://github.com/traefik/traefik/releases/tag/v4.0.1"
+
+
+class OutsideAutoTests(AutoCase):
+    """A floating release past its tag: asked about after a week, then reported (shadow) or moved to (on)."""
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.compose_file("traefik", TRAEFIK_COMPOSE)
+        self.docker = FileDocker(
+            {"traefik": Box("traefik:v3", "old", "traefik", "traefik", (str(self.path),))},
+            {"traefik:v4": "new"},
+            {"old": "3.6.2", "new": "4.0.1"},
+        )
+        self.releases = [noted("v3.6.2", 60, "Fixes."), noted("v4.0.0", 10, "## Changes\n- Faster routing."), noted("v4.0.1", 2, "- Fix a crash.")]
+        self.use(auto="on")
+
+    def use(self, **changes) -> None:
+        settings = {"critical": False, "auto": "shadow", "linked_notes": False, "rollback_files": (), **changes}
+        self.app = replace(APPS["traefik"], **settings)
+        self.config = replace(CONFIG, apps={**APPS, "traefik": self.app})
+
+    def collect(self, known=None, dry: bool = False, morning: bool = True, rejected=frozenset()) -> Outcome:
+        self.outcome = Outcome()
+        self.judged = self.judge(self.docker, known, asking=morning)
+        today = jobs.Morning(self.docker, self.config, dry, self.outcome, rejected) if morning else None
+        with mock.patch.object(jobs, "github_releases", return_value=self.releases):
+            jobs.collect_outside(self.docker, self.config, set(self.docker.boxes), self.outcome.notices, self.outcome.unchecked, self.judged, today)
+        return self.outcome
+
+    def test_on_moves_the_tag_and_commits_the_file(self):
+        outcome = self.collect()
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE.replace('"traefik:v3"', '"traefik:v4"'))
+        self.assertEqual(self.docker.boxes["traefik"].image_id, "new")
+        self.assertEqual(outcome.bumps, [Bump("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, "Only fixes.")])
+        self.assertEqual((outcome.notices, outcome.issues, outcome.rejected), ([], [], []))
+        image, cmd, options = self.docker.ran[0]
+        self.assertEqual(image, auto.TOOLS)
+        self.assertEqual(cmd[-3:], ["traefik: traefik to v4\n\nTraefik 4.0.1 went in by itself. Only fixes.", "--", "traefik/docker-compose.yml"])
+        self.assertIn("--no-verify", cmd)
+        self.assertIn("commit.gpgsign=false", cmd)
+        self.assertEqual((options["workdir"], options["binds"]), (str(self.dir), [f"{self.dir}:{self.dir}"]))
+        self.assertEqual([item[:3] for item in self.judged.fresh], [("traefik", "4.0.1", Verdict("auto", ("Only fixes.",)))])
+        self.assertRegex(self.judged.fresh[0][3], r"^[0-9a-f]{16}$")
+
+    def test_what_workers_ai_is_shown(self):
+        self.collect()
+        question = self.asked[0]
+        self.assertEqual((question.title, question.running, question.available), ("Traefik", "3.6.2", "4.0.1"))
+        self.assertEqual(question.images, "traefik traefik:v3 → traefik:v4")
+        self.assertIn("--api.dashboard=true", question.compose)
+        self.assertIn("## v4.0.0\n## Changes\n- Faster routing.", question.notes)
+        self.assertIn("## v4.0.1\n- Fix a crash.", question.notes)
+        self.assertNotIn("v3.6.2", question.notes)
+        user = verdict.messages(question)[1]["content"]
+        self.assertIn("<notes>", user)
+        self.assertIn("values from .env are not shown", user)
+        self.assertNotIn("moved to by hand", question.compose)
+        self.assertIn("It saves no files first, so data the new version changes stays changed.", user)
+
+    def test_workers_ai_is_told_which_files_the_updater_saves(self):
+        self.use(rollback_files=("/acme/acme.json",))
+        self.collect()
+        user = verdict.messages(self.asked[0])[1]["content"]
+        self.assertIn("stops the app and saves /acme/acme.json, starts the new version and waits for it to be healthy. If it is not, the updater puts those files back", user)
+        self.assertIn("never a step for the owner", verdict.messages(self.asked[0])[0]["content"])
+
+    def test_shadow_only_says_so(self):
+        self.use(auto="shadow")
+        outcome = self.collect()
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE)
+        self.assertFalse([call for call in self.docker.calls if call[0] in ("compose", "config", "pull")])
+        self.assertEqual(outcome.notices, [Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, True, "shadow", ("Only fixes.",))])
+        self.assertEqual(outcome.bumps, [])
+
+    def test_a_release_out_today_is_asked_about_that_morning(self):
+        self.releases[1] = noted("v4.0.0", 0, "## Changes\n- Faster routing.")
+        self.releases[2] = noted("v4.0.1", 0, "- Fix a crash.")
+        self.collect()
+        self.assertEqual(len(self.asked), 1)
+
+    def test_a_compose_file_with_changes_not_committed_stays_by_hand(self):
+        self.docker.status = " M traefik/docker-compose.yml\n"
+        outcome = self.collect()
+        self.assertEqual(self.asked, [])
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE)
+        self.assertEqual(outcome.notices[0].verdict, "manual")
+        self.assertIn("traefik/docker-compose.yml has changes that are not committed", outcome.notices[0].reasons[0])
+        self.assertEqual(self.docker.statuses[0][-2:], ["--", "traefik/docker-compose.yml"])
+        self.docker.status = ""
+        self.collect()
+        self.assertEqual(self.docker.boxes["traefik"].image_id, "new")
+
+    def test_the_rollback_copies_are_private(self):
+        self.docker.archives[("traefik", "/acme/acme.json")] = b"keys"
+        saved = auto.save(self.docker, replace(self.app, rollback_files=("/acme/acme.json",)), "traefik")
+        folder = auto.ROLLBACK / "traefik"
+        self.assertEqual([stat.S_IMODE(path.stat().st_mode) for path in (auto.ROLLBACK, folder, folder / "paths.tsv")], [0o700, 0o700, 0o600])
+        self.assertEqual(saved.files, (("/acme/acme.json", folder / "0.tar"),))
+
+    def test_a_copy_out_of_a_container_is_private(self):
+        class Reply(io.BytesIO):
+            status = 200
+
+        connection = mock.MagicMock()
+        connection.getresponse.return_value = Reply(b"tar")
+        target = self.dir / "copy.tar"
+        docker = runtime.Docker()
+        docker._prefix = "/v1.43"
+        with mock.patch.object(runtime, "_UnixConnection", return_value=connection):
+            self.assertTrue(docker.archive_to("traefik", "/acme/acme.json", target))
+        self.assertEqual((target.read_bytes(), stat.S_IMODE(target.stat().st_mode)), (b"tar", 0o600))
+
+    def test_with_wait_days_it_is_asked_once_its_line_is_old_enough(self):
+        self.use(auto="on", wait_days=7)
+        self.releases[1] = noted("v4.0.0", 3, "## Changes\n- Faster routing.")
+        outcome = self.collect()
+        self.assertEqual(self.asked, [])
+        self.assertEqual(outcome.notices, [Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, False, "wait")])
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE)
+        self.releases[1] = noted("v4.0.0", 7, "## Changes\n- Faster routing.")
+        self.collect()
+        self.assertEqual(len(self.asked), 1)
+
+    def test_steps_to_take_keep_it_by_hand(self):
+        self.answer = Verdict("auto", ("The dashboard moved.",), ("Rename the dashboard flag.",))
+        outcome = self.collect()
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE)
+        self.assertEqual(outcome.notices, [Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, True, "manual", ("The dashboard moved.",), ("Rename the dashboard flag.",), held=HELD_AI)])
+
+    def test_a_flag_the_compose_file_sets_vetoes_an_auto(self):
+        self.releases[1] = noted("v4.0.0", 10, "## Breaking changes\n- `--api.dashboard` is removed.")
+        outcome = self.collect()
+        self.assertEqual(self.asked, [])
+        self.assertEqual(outcome.notices[0].verdict, "manual")
+        self.assertEqual(outcome.notices[0].reasons, ("They name --api.dashboard, set in its compose file.",))
+        self.assertEqual(outcome.notices[0].held, HELD_BREAKING)
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE)
+
+    def test_a_change_that_cannot_be_undone_vetoes_an_auto(self):
+        self.releases[1] = noted("v4.0.0", 10, "The store is migrated. Downgrading is not supported.")
+        notice = self.collect().notices[0]
+        self.assertEqual(notice.verdict, "manual")
+        self.assertIn("Downgrading is not supported", notice.reasons[0])
+
+    def test_each_question_and_its_answer_go_in_the_journal(self):
+        self.answer = replace(Verdict("auto", ("Only fixes.",)), said='{"decision": "auto"}')
+        self.collect()
+        entry = self.journal()[0]
+        self.assertEqual((entry["app"], entry["running"], entry["version"], entry["model"], entry["asked"]), ("traefik", "3.6.2", "4.0.1", verdict.MODEL, True))
+        self.assertEqual(entry["messages"], verdict.messages(self.asked[0]))
+        self.assertEqual(entry["answer"], '{"decision": "auto"}')
+        self.assertEqual(entry["decision"], {"decision": "auto", "reasons": ["Only fixes."], "actions": []})
+        self.assertEqual(oct((self.dir / "journal").stat().st_mode & 0o777), "0o700")
+        self.assertEqual(oct(next((self.dir / "journal").glob("*.jsonl")).stat().st_mode & 0o777), "0o600")
+        self.collect(known=self.judged.known)
+        self.assertEqual(len(self.journal()), 1)
+
+    def test_no_tokens_sends_it_by_hand_at_once_and_asks_nothing_more(self):
+        self.answer = verdict.Unavailable("it has no tokens left today (HTTP 429)")
+        outcome = self.collect()
+        said = "Workers AI was not asked: it has no tokens left today (HTTP 429)."
+        self.assertEqual(outcome.notices, [Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, True, "manual", (said,), unanswered=True)])
+        self.assertEqual((self.judged.unavailable, self.judged.known, self.judged.failures), (said, {}, {}))
+        self.assertEqual(self.journal()[0]["error"], "it has no tokens left today (HTTP 429)")
+        self.assertIn(said, push.message(outcome.notices[0], "t")["message"])
+        app = self.config.apps["traefik"]
+        info = self.docker.inspect("traefik")
+        self.assertIsNone(self.judged.verdict(app, info, info.stack, (3, 6, 2), self.releases[-1], self.releases, {"traefik": "traefik:v4"}, "4.0.1"))
+        self.assertEqual(len(self.asked), 1)
+
+    def test_with_no_cloudflare_settings_it_goes_out_by_hand_saying_so(self):
+        said = "Workers AI was not asked: CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_AI_TOKEN is missing in .env."
+        judge = auto.Judge(self.docker, {}, {}, True, unavailable=said)
+        notices = []
+        with mock.patch.object(jobs, "github_releases", return_value=self.releases):
+            jobs.collect_outside(self.docker, self.config, set(self.docker.boxes), notices, [], judge, None)
+        self.assertEqual(notices, [Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, True, "manual", (said,), unanswered=True)])
+        self.assertEqual(self.asked, [])
+
+    def test_no_answer_waits_unpushed_then_goes_out_by_hand(self):
+        self.answer = VerdictError("Workers AI could not be reached")
+        outcome = self.collect()
+        self.assertEqual(outcome.notices, [Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, False, "pending")])
+        self.assertEqual((self.judged.known, self.judged.fresh), ({}, []))
+        first = date.today()
+        self.assertEqual(self.judged.failures, {("traefik", "4.0.1"): first})
+        later = auto.Judge(self.docker, {}, {}, True, None, {("traefik", "4.0.1"): first - timedelta(days=auto.RETRY_DAYS)})
+        self.assertFalse(later.waiting("traefik", "4.0.1"))
+        self.assertTrue(auto.Judge(self.docker, {}, {}, True, None, {("traefik", "4.0.1"): first}).waiting("traefik", "4.0.1"))
+        self.answer = Verdict("manual", ("A flag was renamed.",))
+        self.collect()
+        self.assertEqual(self.judged.failures, {})
+
+    def test_the_sunday_mail_holds_a_release_it_has_no_answer_for(self):
+        notice = self.collect(morning=False).notices[0]
+        self.assertEqual((notice.verdict, notice.by_hand, self.asked), ("pending", False, []))
+
+    def test_an_answer_is_asked_again_once_what_it_was_given_for_changed(self):
+        self.use(auto="shadow")
+        self.collect()
+        self.assertEqual(len(self.asked), 1)
+        key = ("traefik", "4.0.1")
+        known, prints = {key: self.judged.known[key]}, {key: self.judged.prints[key]}
+        judge = auto.Judge(self.docker, {}, known, True, prints)
+        self.assertEqual(judge.verdict(self.app, self.docker.inspect("traefik"), self.docker.inspect("traefik").stack, (3, 6, 2), self.releases[2], self.releases, {"traefik": "traefik:v4"}, "4.0.1"), known[key])
+        self.assertEqual(len(self.asked), 1)
+        self.releases[2] = noted("v4.0.1", 2, "- Fix a crash.\n- The dashboard flag is renamed.")
+        judge.verdict(self.app, self.docker.inspect("traefik"), self.docker.inspect("traefik").stack, (3, 6, 2), self.releases[2], self.releases, {"traefik": "traefik:v4"}, "4.0.1")
+        self.assertEqual(len(self.asked), 2)
+
+    def test_a_rollback_holds_whatever_is_shown_later(self):
+        judge = auto.Judge(self.docker, {}, {})
+        judge.overrule("traefik", "4.0.1", "Rolled back.")
+        self.assertEqual(judge.prints[("traefik", "4.0.1")], "")
+        self.assertEqual(self.collect(known=judge.known).notices[0].reasons, ("Rolled back.",))
+        self.assertEqual(self.asked, [])
+
+    def test_a_verdict_is_asked_once(self):
+        outcome = self.collect(known={("traefik", "4.0.1"): Verdict("manual", ("Said before.",))})
+        self.assertEqual(self.asked, [])
+        self.assertEqual(outcome.notices[0].reasons, ("Said before.",))
+
+    def test_notes_that_may_miss_releases_are_manual_unasked(self):
+        self.releases = self.releases[1:]
+        notice = self.collect().notices[0]
+        self.assertEqual(self.asked, [])
+        self.assertEqual(notice.verdict, "manual")
+        self.assertIn("stop after 3.6.2", notice.reasons[0])
+        self.assertEqual(len(self.judged.fresh), 1)
+
+    def test_an_unhealthy_release_is_rolled_back_and_stays_by_hand(self):
+        self.docker.unhealthy = {"new"}
+        outcome = self.collect()
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE)
+        self.assertEqual(self.docker.boxes["traefik"].image_id, "old")
+        self.assertIn("Traefik 4.0.1 did not become healthy. The previous image was restored.", outcome.issues[0].detail)
+        self.assertEqual((outcome.rejected, outcome.bumps, self.docker.ran), ([("traefik", "4.0.1")], [], []))
+        self.assertEqual(self.judged.known[("traefik", "4.0.1")].decision, "manual")
+        self.assertEqual(self.collect(rejected={("traefik", "4.0.1")}).notices[0].verdict, "manual")
+
+    def test_an_edit_that_changes_more_than_the_image_is_put_back(self):
+        def drift(count, resolved):
+            if count == 2:
+                resolved["services"]["traefik"]["rest"] += "x"
+            return resolved
+
+        self.docker.config_hook = drift
+        outcome = self.collect()
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE)
+        self.assertIn("the edit changed more than the image", outcome.issues[0].detail)
+        self.assertFalse([call for call in self.docker.calls if call[0] == "compose"])
+        self.assertEqual(outcome.rejected, [])
+
+    def test_a_failed_pull_puts_the_file_back_and_tries_again(self):
+        self.docker.remote = {}
+        outcome = self.collect()
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE)
+        self.assertIn("the pull failed", outcome.issues[0].detail)
+        self.assertIn("tried again the next morning", outcome.issues[0].detail)
+        self.assertEqual(self.judged.known[("traefik", "4.0.1")].decision, "auto")
+
+    @unittest.skipIf(os.getuid() == 0, "root writes read-only files")
+    def test_a_file_the_updater_cannot_write_stays_by_hand_unasked(self):
+        self.path.chmod(0o444)
+        self.addCleanup(self.path.chmod, 0o644)
+        notice = self.collect().notices[0]
+        self.assertEqual(self.asked, [])
+        self.assertEqual(notice.reasons, ("It can't go in by itself: the updater can't write docker-compose.yml.",))
+
+    def test_an_image_from_a_variable_stays_by_hand_unasked(self):
+        self.path.write_text(TRAEFIK_COMPOSE.replace('"traefik:v3"', "traefik:${TRAEFIK_TAG}"))
+        notice = self.collect().notices[0]
+        self.assertEqual(self.asked, [])
+        self.assertIn("not a plain image:tag", notice.reasons[0])
+
+    def test_the_sunday_mail_shows_what_the_morning_will_do(self):
+        outcome = self.collect(known={("traefik", "4.0.1"): Verdict("auto", ("Only fixes.",))}, morning=False)
+        self.assertEqual(outcome.notices, [Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, False, "auto", ("Only fixes.",))])
+        self.assertEqual(self.docker.calls, [])
+
+    def test_a_dry_run_asks_and_changes_nothing(self):
+        outcome = self.collect(dry=True)
+        self.assertEqual(len(self.asked), 1)
+        self.assertEqual(self.path.read_text(), TRAEFIK_COMPOSE)
+        self.assertEqual(outcome.notices[0].verdict, "auto")
+        self.assertFalse([call for call in self.docker.calls if call[0] in ("compose", "pull")])
+
+    def test_a_commit_that_fails_is_mailed_and_the_update_stays(self):
+        self.docker.run_code = 1
+        outcome = self.collect()
+        self.assertEqual(self.docker.boxes["traefik"].image_id, "new")
+        self.assertEqual(outcome.issues, [Issue("traefik", "4.0.1 went in by itself, but the compose file change was not committed: fatal: boom")])
+        self.assertEqual(len(outcome.bumps), 1)
+
+    def test_a_critical_app_keeps_majors_unasked(self):
+        self.use(auto="on", critical=True)
+        outcome = self.collect()
+        self.assertEqual(self.asked, [])
+        self.assertEqual(outcome.notices, [Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL)])
+
+    def test_without_a_judge_nothing_changes(self):
+        outcome = Outcome()
+        with mock.patch.object(jobs, "github_releases", return_value=self.releases):
+            jobs.collect_outside(self.docker, self.config, set(self.docker.boxes), outcome.notices)
+        self.assertEqual(outcome.notices, [Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL)])
+        self.assertEqual(self.asked, [])
+
+
+class HomeAssistantAutoTests(AutoCase):
+    """The inventory and linked notes: a breaking change in an integration set up stays by hand."""
+
+    BLOG = "https://www.home-assistant.io/blog/2026/12/03/release-202612/"
+
+    def setUp(self):
+        super().setUp()
+        path = self.compose_file("homeassistant", "services:\n  homeassistant:\n    image: ghcr.io/home-assistant/home-assistant:2026.11\n")
+        image = "ghcr.io/home-assistant/home-assistant:2026.11"
+        self.docker = FileDocker(
+            {"homeassistant": Box(image, "old", "homeassistant", "homeassistant", (str(path),))},
+            {"ghcr.io/home-assistant/home-assistant:2026.12": "new"},
+            {"old": "2026.11.3", "new": "2026.12.1"},
+        )
+        entries = {"data": {"entries": [{"domain": "mqtt", "title": "Broker at home"}, {"domain": "zha", "title": "Zigbee"}]}}
+        self.docker.paths[("homeassistant", "/config/.storage/core.config_entries")] = json.dumps(entries).encode()
+        self.docker.paths[("homeassistant", "/config/configuration.yaml")] = b"default_config:\n"
+        self.docker.paths[("homeassistant", "/config/automations.yaml")] = b"- triggers:\n  - trigger: sun\n"
+        self.docker.paths[("homeassistant", "/config/scripts.yaml")] = b""
+        self.releases = [noted("2026.11.3", 40), noted("2026.12.0", 9, f"Read the [release notes]({self.BLOG})."), noted("2026.12.1", 2)]
+        self.app = replace(APPS["homeassistant"], auto="on", rollback_files=())
+        self.config = replace(CONFIG, apps={**APPS, "homeassistant": self.app})
+
+    def collect(self, page: str) -> Outcome:
+        outcome = Outcome()
+        judge = self.judge(self.docker)
+        with mock.patch.object(jobs, "github_releases", return_value=self.releases), \
+                mock.patch.object(notes, "fetch_page", return_value=page) as self.fetched:
+            jobs.collect_outside(self.docker, self.config, set(self.docker.boxes), outcome.notices, None, judge, jobs.Morning(self.docker, self.config, False, outcome))
+        return outcome
+
+    def test_a_breaking_change_in_an_integration_set_up_stays_by_hand(self):
+        outcome = self.collect("## Backward-incompatible changes {#bic}\n**MQTT**\nThe broker option moved (/integrations/mqtt/)")
+        self.fetched.assert_called_once_with(self.BLOG)
+        self.assertEqual(outcome.notices[0].verdict, "manual")
+        self.assertEqual(outcome.notices[0].reasons[0], "They name mqtt, which this setup uses.")
+        self.assertEqual(self.asked, [])
+        entry = self.journal()[0]
+        self.assertEqual((entry["asked"], entry["decision"]["decision"]), (False, "manual"))
+        shown = entry["messages"][1]["content"]
+        self.assertIn(f"From {self.BLOG}, linked from these notes:", shown)
+        self.assertIn("In use by this setup, every domain in /config/.storage/core.config_entries: mqtt, zha", shown)
+        self.assertNotIn("Broker at home", shown)
+        self.assertIn("File /config/automations.yaml:\n```\n- triggers:\n  - trigger: sun\n```", shown)
+        self.assertIn("File /config/scripts.yaml:", shown)
+        self.assertEqual(outcome.bumps, [])
+
+    def test_a_beta_is_shown_but_its_links_are_not_read(self):
+        self.releases.insert(1, replace(noted("2026.12.0", 12, "See the [release notes](https://rc.a.test/latest)."), tag="2026.12.0b0", prerelease=True))
+        self.collect("## Backward-incompatible changes\nNothing here.")
+        self.fetched.assert_called_once_with(self.BLOG)
+        self.assertIn("## 2026.12.0b0\nSee the [release notes](https://rc.a.test/latest).\n\n## 2026.12.0", self.asked[0].notes)
+
+    def test_a_long_linked_page_is_cut_and_stays_by_hand(self):
+        outcome = self.collect("## Breaking changes\n" + "- A comment about it.\n" * 4000)
+        self.assertEqual(self.asked, [])
+        self.assertIn(f"[cut at {auto.MAX_PAGE} characters]", self.journal()[0]["messages"][1]["content"])
+        self.assertEqual(outcome.notices[0].verdict, "manual")
+        self.assertEqual(outcome.notices[0].reasons[0], "A page the notes link was too long to show whole, so a step in it may be missed.")
+
+    def test_an_inventory_kept_one_object_per_line(self):
+        lines = b'{"type":"Coordinator"}\n{"modelId":"ZBMINIR2","ieeeAddr":"0x1"}\n{"modelId":"TS130F"}\n{"modelId":"ZBMINIR2"}\n'
+        self.docker.paths[("homeassistant", "/app/data/database.db")] = lines
+        app = replace(self.app, inventory_file="/app/data/database.db", inventory_key="modelId")
+        self.assertEqual(auto.inventory(self.docker, app, self.docker.inspect("homeassistant")), ["TS130F", "ZBMINIR2"])
+
+    def test_a_linked_page_that_is_gone_is_shown_as_missing(self):
+        gone = urllib.error.HTTPError(self.BLOG, 404, "Not Found", {}, None)
+        outcome = Outcome()
+        with mock.patch.object(jobs, "github_releases", return_value=self.releases), mock.patch.object(notes, "fetch_page", side_effect=gone):
+            jobs.collect_outside(self.docker, self.config, set(self.docker.boxes), outcome.notices, None, self.judge(self.docker), None)
+        self.assertIn("(could not be read: HTTP 404)", self.asked[0].notes)
+
+    def test_a_month_that_touches_nothing_set_up_moves_the_tag(self):
+        outcome = self.collect("## Backward-incompatible changes\n**Plex**\nA sensor was renamed (/integrations/plex/)")
+        self.assertEqual([(bump.before, bump.after) for bump in outcome.bumps], [("2026.11.3", "2026.12.1")])
+        self.assertIn("home-assistant:2026.12\n", (self.dir / "homeassistant" / "docker-compose.yml").read_text())
+
+
+class HomeAssistantPatchTests(AutoCase):
+    """A patch the 2026.11 tag takes by itself: asked about only when its notes mark a breaking change to something set up."""
+
+    IMAGE = "ghcr.io/home-assistant/home-assistant:2026.11"
+
+    def setUp(self):
+        super().setUp()
+        path = self.compose_file("homeassistant", f"services:\n  homeassistant:\n    image: {self.IMAGE}\n")
+        self.docker = FileDocker(
+            {"homeassistant": Box(self.IMAGE, "old", "homeassistant", "homeassistant", (str(path),))},
+            {self.IMAGE: "new"},
+            {"old": "2026.11.3", "new": "2026.11.4"},
+        )
+        entries = {"data": {"entries": [{"domain": "mqtt"}, {"domain": "zha"}]}}
+        self.docker.paths[("homeassistant", "/config/.storage/core.config_entries")] = json.dumps(entries).encode()
+        for name in ("configuration", "automations", "scripts"):
+            self.docker.paths[("homeassistant", f"/config/{name}.yaml")] = b""
+        self.app = replace(APPS["homeassistant"], auto="on", linked_notes=False, rollback_files=())
+
+    def update(self, line: str, judge: auto.Judge | None = None) -> Outcome:
+        outcome = Outcome()
+        self.judged = judge or self.judge(self.docker)
+        releases = [noted("2026.11.3", 10), noted("2026.11.4", 1, f"- Fix a thing ([@a] - [#1])\n{line}")]
+        with mock.patch.object(jobs, "github_releases", return_value=releases):
+            update_floating(self.docker, CONFIG, set(self.docker.boxes), False, outcome, frozenset(), self.app, judge=self.judged)
+        return outcome
+
+    def test_a_patch_with_no_breaking_change_for_this_setup_goes_in_unasked(self):
+        for line in ("- Speed up startup ([@a] - [#2]) ([zha docs])", "- Remove polling ([@a] - [#3]) ([omnilogic docs]) (breaking-change)"):
+            with self.subTest(line=line):
+                self.docker.boxes["homeassistant"] = replace(self.docker.boxes["homeassistant"], image_id="old")
+                self.docker.images[self.IMAGE] = "new"
+                outcome = self.update(line)
+                self.assertEqual(self.docker.boxes["homeassistant"].image_id, "new")
+                self.assertEqual((self.asked, outcome.notices), ([], []))
+
+    def test_a_breaking_change_to_an_integration_set_up_is_asked_about(self):
+        outcome = self.update("- Rename a ZHA sensor ([@a] - [#4]) ([zha docs]) (breaking-change)")
+        self.assertEqual(len(self.asked), 1)
+        self.assertIn("Rename a ZHA sensor", self.asked[0].notes)
+        self.assertEqual(self.docker.boxes["homeassistant"].image_id, "new")
+        self.assertEqual(outcome.bumps[0].reason, "Only fixes.")
+
+    def test_a_breaking_change_to_home_assistant_itself_is_asked_about_and_can_stay_by_hand(self):
+        self.answer = Verdict("manual", ("Scripts that loop forever now stop.",))
+        outcome = self.update("- Stop scripts that loop more than 10000 times ([@a] - [#5]) (breaking-change)")
+        self.assertEqual(len(self.asked), 1)
+        self.assertEqual((self.docker.boxes["homeassistant"].image_id, self.docker.images[self.IMAGE]), ("old", "old"))
+        notice = outcome.notices[0]
+        self.assertEqual((notice.running, notice.available, notice.verdict), ("2026.11.3", "2026.11.4", "manual"))
+        self.assertEqual(notice.reasons, (
+            "“Stop scripts that loop more than 10000 times ([@a] - [#5]) (breaking-change)”",
+            "Scripts that loop forever now stop.",
+        ))
+        self.assertEqual(notice.held, HELD_AI)
+
+    def test_with_no_tokens_a_marked_patch_goes_out_by_hand_saying_both(self):
+        said = "Workers AI was not asked: it has no tokens left today (HTTP 429)."
+        outcome = self.update("- Change ZHA groups ([@a] - [#6]) ([zha docs]) (breaking-change)", auto.Judge(self.docker, {}, {}, True, unavailable=said))
+        self.assertEqual(self.asked, [])
+        self.assertEqual(self.docker.boxes["homeassistant"].image_id, "old")
+        self.assertEqual(outcome.notices[0].reasons, ("“Change ZHA groups ([@a] - [#6]) ([zha docs]) (breaking-change)”", said))
+        self.assertEqual(outcome.notices[0].held, HELD_BREAKING)
+
+    def test_notes_that_cannot_be_read_hold_the_patch_until_the_next_morning(self):
+        outcome = Outcome()
+        with mock.patch.object(jobs, "github_releases", side_effect=OSError("GitHub is down")):
+            update_floating(self.docker, CONFIG, set(self.docker.boxes), False, outcome, frozenset(), self.app, judge=self.judge(self.docker))
+        self.assertEqual(self.docker.boxes["homeassistant"].image_id, "old")
+        self.assertEqual((outcome.notices, outcome.unchecked), ([], [("homeassistant", "GitHub is down")]))
+
+    def test_a_rebuild_of_the_version_running_goes_in_unasked(self):
+        self.docker.versions["new"] = "2026.11.3"
+        outcome = self.update("- Rename a ZHA sensor ([@a] - [#4]) ([zha docs]) (breaking-change)")
+        self.assertEqual(self.docker.boxes["homeassistant"].image_id, "new")
+        self.assertEqual((self.asked, outcome.unchecked), ([], []))
+
+    def test_a_check_that_fails_puts_the_tag_back_on_the_running_image(self):
+        outcome = Outcome()
+        with mock.patch.object(jobs, "github_releases", return_value=[noted("2026.11.3", 10), noted("2026.11.4", 1, "- X (breaking-change)")]), \
+                mock.patch.object(jobs, "_decide", side_effect=LookupError("unknown charset")):
+            update_floating(self.docker, CONFIG, set(self.docker.boxes), False, outcome, frozenset(), self.app, judge=self.judge(self.docker))
+        self.assertEqual((self.docker.boxes["homeassistant"].image_id, self.docker.images[self.IMAGE]), ("old", "old"))
+        self.assertEqual(outcome.unchecked, [("homeassistant", "unknown charset")])
+
+    def test_marked_lines(self):
+        text = "- A ([zha docs]) (breaking-change)\n- B ([plex docs]) (breaking-change)\n- C (breaking-change)\n- D ([zha docs])"
+        self.assertEqual(notes.marked(text, "(breaking-change)", "[{} docs]", ["zha"]), ["A ([zha docs]) (breaking-change)", "C (breaking-change)"])
+        self.assertEqual(len(notes.marked(text, "(breaking-change)", "", [])), 3)
+
+    def test_explain_says_patches_with_a_marked_change_are_asked_about(self):
+        self.assertEqual(jobs.explain(self.app, "2026.11")[0], ("patch", "by itself, unless its notes mark a breaking change to something in use; then Workers AI is asked: by itself if nothing needs doing by hand, else emailed"))
+
+
+class HoldMajorAutoTests(AutoCase):
+    """A major hold_major keeps back, installed with its database saved first."""
+
+    IMAGE = "lscr.io/linuxserver/radarr:latest"
+    DB, WAL = "/config/radarr.db", "/config/radarr.db-wal"
+
+    def setUp(self):
+        super().setUp()
+        path = self.compose_file("media-automation", f"services:\n  radarr:\n    image: {self.IMAGE}\n")
+        self.docker = FileDocker(
+            {"radarr": Box(self.IMAGE, "old", "media-automation", "radarr", (str(path),))},
+            {self.IMAGE: "new"},
+            {"old": "6.4.4.10685-ls325", "new": "7.0.3.10918-ls330"},
+        )
+        self.docker.archives[("radarr", self.DB)] = b"v6 db"
+        self.releases = [noted("v6.4.4.10685", 60), noted("v7.0.0.10900", 10, "- New UI."), noted("v7.0.3.10918", 1)]
+        self.app = replace(APPS["radarr"], auto="on", rollback_files=(self.DB, self.WAL))
+
+    def update(self) -> Outcome:
+        outcome = Outcome()
+        self.judged = self.judge(self.docker)
+        with mock.patch.object(jobs, "github_releases", return_value=self.releases):
+            update_floating(self.docker, CONFIG, set(self.docker.boxes), False, outcome, frozenset(), self.app, judge=self.judged)
+        return outcome
+
+    def test_the_major_goes_in_with_its_database_saved_while_stopped(self):
+        outcome = self.update()
+        self.assertEqual(self.docker.boxes["radarr"].image_id, "new")
+        self.assertEqual(outcome.bumps, [Bump("radarr", "6.4.4.10685", "7.0.3.10918", "https://github.com/Radarr/Radarr/releases/tag/v7.0.3.10918", "Only fixes.")])
+        steps = [call[:4] for call in self.docker.calls if call[0] in ("compose", "archive_to")]
+        self.assertEqual(steps[1:4], [("compose", "media-automation", "stop", "radarr"), ("archive_to", "radarr", self.DB), ("archive_to", "radarr", self.WAL)])
+        saved = self.dir / "rollback" / "radarr"
+        self.assertEqual((saved / "0.tar").read_bytes(), b"v6 db")
+        self.assertEqual((saved / "paths.tsv").read_text(), f"0.tar\t{self.DB}\n1.tar\t{self.WAL}\n")
+        self.assertEqual(self.docker.ran, [])
+        self.assertEqual(outcome.notices, [])
+
+    def test_a_major_whose_releases_cant_be_read_is_still_mailed_by_hand(self):
+        outcome = Outcome()
+        with mock.patch.object(jobs, "github_releases", side_effect=OSError("rate limited")):
+            update_floating(self.docker, CONFIG, set(self.docker.boxes), False, outcome, frozenset(), self.app, judge=self.judge(self.docker))
+        self.assertEqual(self.docker.boxes["radarr"].image_id, "old")
+        self.assertEqual([(notice.key, notice.available, notice.by_hand) for notice in outcome.notices], [("radarr", "7.0.3.10918", True)])
+
+    def test_an_unhealthy_major_gets_its_files_back_exactly(self):
+        self.docker.unhealthy = {"new"}
+
+        def migrate(stack, *args):
+            original(stack, *args)
+            if args[:2] == ("up", "-d") and self.docker.boxes["radarr"].image_id == "new":
+                self.docker.archives.update({("radarr", self.DB): b"v7 db", ("radarr", self.WAL): b"v7 wal"})
+
+        original, self.docker.compose = self.docker.compose, migrate
+        outcome = self.update()
+        self.assertEqual(self.docker.boxes["radarr"].image_id, "old")
+        self.assertEqual(self.docker.images[self.IMAGE], "old")
+        self.assertEqual(self.docker.archives[("radarr", self.DB)], b"v6 db")
+        self.assertNotIn(("radarr", self.WAL), self.docker.archives)
+        image, cmd, options = self.docker.ran[0]
+        self.assertEqual((image, cmd), (auto.TOOLS, ["-rf", "--", self.DB, self.WAL]))
+        self.assertEqual((options["entrypoint"], options["user"], options["volumes_from"]), (["rm"], "0:0", ["radarr"]))
+        self.assertEqual(outcome.rejected, [("radarr", "new")])
+        self.assertEqual(self.judged.known[("radarr", "7.0.3.10918")].decision, "manual")
+
+    def test_a_stop_signal_midway_puts_the_previous_version_back(self):
+        calls = []
+        original = self.docker.wait_ready
+
+        def wait_ready(name):
+            calls.append(name)
+            if len(calls) == 1:
+                raise SystemExit(143)
+            return original(name)
+
+        self.docker.wait_ready = wait_ready
+        with self.assertRaises(SystemExit):
+            self.update()
+        self.assertEqual((self.docker.boxes["radarr"].image_id, self.docker.images[self.IMAGE]), ("old", "old"))
+        self.assertEqual(self.docker.archives[("radarr", self.DB)], b"v6 db")
+
+    def test_no_rollback_tool_means_nothing_is_stopped(self):
+        self.docker.unpullable = {auto.TOOLS}
+        outcome = self.update()
+        self.assertEqual((self.docker.boxes["radarr"].image_id, self.docker.images[self.IMAGE]), ("old", "old"))
+        self.assertNotIn(("compose", "media-automation", "stop", "radarr"), [call[:4] for call in self.docker.calls])
+        self.assertIn("the image a rollback needs could not be pulled", outcome.issues[0].detail)
+
+    def test_shadow_keeps_the_hold(self):
+        self.app = replace(self.app, auto="shadow")
+        outcome = self.update()
+        self.assertEqual((self.docker.boxes["radarr"].image_id, self.docker.images[self.IMAGE]), ("old", "old"))
+        self.assertEqual(outcome.notices[0].verdict, "shadow")
+        self.assertFalse([call for call in self.docker.calls if call[0] == "archive_to"])
+
+    def test_a_backup_that_fails_starts_the_old_container_again(self):
+        def broken(name, path, target):
+            raise DockerError("disk full")
+
+        self.docker.archive_to = broken
+        outcome = self.update()
+        self.assertIn("radarr could not be backed up first: disk full", outcome.issues[0].detail)
+        self.assertEqual(self.docker.images[self.IMAGE], "old")
+        self.assertIn(("compose", "media-automation", "start", "radarr"), self.docker.calls)
+
+
+class SemverAutoTests(AutoCase):
+    """An AdGuard minor under pin_minor: the exact tag pulled, retagged as v1.1, and the file moved from v1.0."""
+
+    IMAGE = "adguard/adguardhome"
+    CONF = "/opt/adguardhome/conf/AdGuardHome.yaml"
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.compose_file("adguard", f"services:\n  adguard:\n    image: {self.IMAGE}:v1.0\n")
+        self.docker = FileDocker(
+            {"adguard": Box(f"{self.IMAGE}:v1.0", "ag-old", "adguard", "adguard", (str(self.path),))},
+            {f"{self.IMAGE}:v1.1.0": "ag-minor"},
+            {"ag-old": "v1.0.0", "ag-minor": "v1.1.0"},
+        )
+        self.docker.archives[("adguard", self.CONF)] = b"schema 35"
+        self.releases = [noted("v1.0.0", 60), noted("v1.1.0", 10, "- Faster lookups.")]
+        self.app = replace(APPS["adguard"], auto="on")
+
+    def update(self) -> Outcome:
+        outcome = Outcome()
+        with mock.patch.object(jobs, "github_releases", return_value=self.releases):
+            update_semver(self.docker, CONFIG, set(self.docker.boxes), False, outcome, frozenset(), self.app, judge=self.judge(self.docker))
+        return outcome
+
+    def test_a_pinned_minor_goes_in_by_itself(self):
+        outcome = self.update()
+        self.assertEqual(self.path.read_text(), f"services:\n  adguard:\n    image: {self.IMAGE}:v1.1\n")
+        self.assertIn(("pull", f"{self.IMAGE}:v1.1.0"), self.docker.calls)
+        self.assertEqual(self.docker.images[f"{self.IMAGE}:v1.1"], "ag-minor")
+        self.assertEqual(self.docker.boxes["adguard"].image_id, "ag-minor")
+        self.assertEqual([(bump.before, bump.after, bump.reason) for bump in outcome.bumps], [("1.0.0", "1.1.0", "Only fixes.")])
+        self.assertEqual(self.docker.ran[0][1][-3:], ["adguard: adguard to v1.1\n\nAdGuard Home 1.1.0 went in by itself. Only fixes.", "--", "adguard/docker-compose.yml"])
+        self.assertEqual(outcome.issues, [])
+
+    def test_a_plain_minor_still_waits_its_week_and_installs_itself(self):
+        self.app = replace(self.app, pin_minor=False, wait_days=7)
+        self.releases[1] = noted("v1.1.0", 3)
+        outcome = self.update()
+        self.assertEqual(self.asked, [])
+        self.assertEqual(outcome.notices, [Notice("adguard", "1.0.0", "1.1.0", "https://github.com/AdguardTeam/AdGuardHome/releases/tag/v1.1.0", False)])
+
+
+class ComposeFileTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+
+    def write(self, name: str, text: str) -> str:
+        path = self.dir / name
+        path.write_bytes(text.encode())
+        return str(path)
+
+    def test_the_next_tag_keeps_the_shape(self):
+        self.assertEqual(composefile.next_tag("2026.11", (2026, 12, 1)), "2026.12")
+        self.assertEqual(composefile.next_tag("v3", (4, 0, 2)), "v4")
+        self.assertEqual(composefile.next_tag("2.1-alpine", (2, 2, 0)), "2.2-alpine")
+        self.assertIsNone(composefile.next_tag("latest", (1, 0)))
+        self.assertIsNone(composefile.next_tag("1.2.3", (2, 0)))
+
+    def test_retag(self):
+        self.assertEqual(composefile.retag("ghcr.io/x/y:2026.11", "2026.12"), "ghcr.io/x/y:2026.12")
+        self.assertEqual(composefile.retag("localhost:5000/app", "v2"), "localhost:5000/app:v2")
+        with self.assertRaises(composefile.EditError):
+            composefile.retag("x/y:1@sha256:00", "2")
+
+    def test_only_the_image_line_changes(self):
+        text = "name: x\r\nservices:\r\n  db:\r\n    image: postgres:16\r\n  app:\r\n    # pinned\r\n    image: 'x/app:v3'  # major\r\n    environment:\r\n      image: not-this\r\n"
+        path = self.write("compose.yaml", text)
+        edits = composefile.plan([path], [("app", "x/app:v3", "x/app:v4")])
+        self.assertEqual(edits, [composefile.Edit(path, text, text.replace("'x/app:v3'", "'x/app:v4'"))])
+        composefile.write(edits)
+        self.assertEqual(Path(path).read_bytes(), text.replace("'x/app:v3'", "'x/app:v4'").encode())
+        composefile.revert(edits)
+        self.assertEqual(Path(path).read_bytes(), text.encode())
+
+    def test_the_file_that_sets_the_image_is_the_one_edited(self):
+        main = self.write("docker-compose.yml", "services:\n  app:\n    image: docker.io/library/nginx:1.27\n")
+        override = self.write("docker-compose.override.yml", "services:\n  app:\n    ports:\n      - 80:80\n")
+        edits = composefile.plan([main, override], [("app", "nginx:1.27", "nginx:1.28")])
+        self.assertEqual([edit.path for edit in edits], [main])
+        self.assertIn("docker.io/library/nginx:1.28", edits[0].after)
+
+    def test_what_it_refuses(self):
+        cases = [
+            ("services:\n  app:\n    image: x:${TAG}\n", "not a plain image:tag"),
+            ("services:\n  app:\n    image: x:1@sha256:00\n", "pinned by digest"),
+            ("services:\n  app:\n    image: y:1\n", "says y:1 for app, but it runs x:1"),
+            ("services:\n  app:\n    build: .\n", "no file of the project sets the image of app"),
+            ("services:\n  app:\n    image: >-\n      x:1\n", "not a plain image:tag"),
+        ]
+        for text, message in cases:
+            with self.subTest(message=message):
+                path = self.write("docker-compose.yml", text)
+                with self.assertRaises(composefile.EditError) as caught:
+                    composefile.plan([path], [("app", "x:1", "x:2")])
+                self.assertIn(message, str(caught.exception))
+        first = self.write("a.yml", "services:\n  app:\n    image: x:1\n")
+        second = self.write("b.yml", "services:\n  app:\n    image: x:1\n")
+        with self.assertRaises(composefile.EditError):
+            composefile.plan([first, second], [("app", "x:1", "x:2")])
+
+    def test_a_service_block(self):
+        text = "services:\n  db:\n    image: a\n\n  app:\n    image: b\n    ports:\n      - 1:1\n\nvolumes:\n  data:\n"
+        self.assertEqual(composefile.block(text, "app"), "  app:\n    image: b\n    ports:\n      - 1:1\n")
+        self.assertEqual(composefile.block(text, "data"), "")
+
+    def test_only_images(self):
+        before = {"services": {"app": {"image": "x:1", "environment": {"A": "1"}}}}
+        after = {"services": {"app": {"image": "docker.io/x:2", "environment": {"A": "1"}}}}
+        self.assertTrue(composefile.only_images(before, after, {"app": "x:2"}))
+        self.assertFalse(composefile.only_images(before, after, {"app": "x:3"}))
+        changed = {"services": {"app": {"image": "x:2", "environment": {"A": "2"}}}}
+        self.assertFalse(composefile.only_images(before, changed, {"app": "x:2"}))
+
+
+class NotesTests(unittest.TestCase):
+    def test_short_notes_are_kept_whole(self):
+        self.assertEqual(notes.relevant("  - Fixed a crash.\n"), "- Fixed a crash.")
+
+    def test_long_notes_keep_their_breaking_sections_and_lines(self):
+        filler = "\n".join(f"- Improved thing {index}." for index in range(200))
+        text = f"# 4.0\n## Features\n{filler}\n## Breaking changes\n### Routers\n- The old syntax is gone.\n## Fixes\n- The API no longer accepts v1 tokens.\n- Fixed a typo."
+        kept = notes.relevant(text)
+        self.assertIn("## Breaking changes\n### Routers\n- The old syntax is gone.", kept)
+        self.assertIn("## Fixes\n- The API no longer accepts v1 tokens.", kept)
+        self.assertNotIn("Fixed a typo", kept)
+        self.assertNotIn("Improved thing", kept)
+        self.assertTrue(kept.endswith("[203 other lines left out: none mention a breaking change, deprecation, removal or migration]"))
+
+    def test_between(self):
+        releases = [release("v1.0.0", 30), release("v1.1.0", 20), Release((1, 2, 0), "v1.2.0-rc1", NOW - timedelta(days=15), prerelease=True), release("v1.2.0", 10)]
+        self.assertEqual([item.tag for item in notes.between(releases, (1, 0, 0), (1, 2, 0))], ["v1.1.0", "v1.2.0-rc1", "v1.2.0"])
+        self.assertEqual([item.tag for item in notes.between(releases, (1, 1, 0), (1, 2, 0))], ["v1.2.0-rc1", "v1.2.0"])
+        self.assertEqual([item.tag for item in notes.between(releases[:2] + releases[3:], (1, 0, 0), (1, 1, 0))], ["v1.1.0"])
+        with self.assertRaises(notes.NotesError):
+            notes.between(releases[1:], (1, 0, 0), (1, 2, 0))
+        with self.assertRaises(notes.NotesError):
+            notes.between(releases, (1, 0, 0), (1, 3, 0))
+
+    def test_links_named_as_notes_or_guides(self):
+        body = "See the [release notes](https://a.test/blog#x), the [Migration Guide](https://a.test/m) and [#123](https://a.test/pr)."
+        self.assertEqual(notes.links(body), ["https://a.test/blog#x", "https://a.test/m"])
+
+    def test_bare_links_that_are_the_notes_or_named_as_them(self):
+        self.assertEqual(notes.links("https://a.test/blog/release-20261/\n"), ["https://a.test/blog/release-20261/"])
+        body = "> This is a **BREAKING** release, before updating, read https://a.test/d/1!\nMigration Guide: https://a.test/wiki/v2\nMore:\nhttps://a.test/beta.0\n- Fix (https://a.test/pr/2)"
+        self.assertEqual(notes.links(body), ["https://a.test/d/1", "https://a.test/wiki/v2"])
+
+    def test_changed_and_configuration_sections_are_kept(self):
+        filler = "\n".join(f"- Improved thing {index}." for index in range(200))
+        example = "  ```yaml\n  # BEFORE:\n  'querylog_interval': 1\n  ```\nTo roll back, set it to 1 again."
+        text = f"## Added\n{filler}\n### Changed\n- Ports are checked for uniqueness.\n#### Configuration Changes\nThe schema version is now 12.\n{example}\n### Fixed\n- A typo."
+        kept = notes.relevant(text)
+        self.assertIn(f"### Changed\n- Ports are checked for uniqueness.\n#### Configuration Changes\nThe schema version is now 12.\n{example}", kept)
+        self.assertNotIn("A typo", kept)
+
+    def test_a_beta_tag_is_read_as_the_release_it_leads_to(self):
+        import releases
+
+        payload = [
+            {"tag_name": "2.0.0-beta.1", "prerelease": True, "published_at": "2025-01-01T00:00:00Z", "body": "b"},
+            {"tag_name": "2026.11.0b0", "prerelease": True, "published_at": "2026-10-29T00:00:00Z"},
+            {"tag_name": "2.0.0-final", "prerelease": False, "published_at": "2025-02-01T00:00:00Z"},
+        ]
+        with mock.patch.object(releases, "_get_json", return_value=payload):
+            found = releases.github_releases("a/b")
+        self.assertEqual([(item.tag, item.version, item.prerelease) for item in found], [("2.0.0-beta.1", (2, 0, 0), True), ("2026.11.0b0", (2026, 11, 0), True)])
+        self.assertIsNone(releases.latest_stable(found))
+
+    def test_a_page_as_text_and_its_linked_section(self):
+        html = """<html><head><style>p{}</style></head><body><nav>Menu</nav>
+        <h2 id="new">New</h2><p>Lots of   <b>new</b> things.</p>
+        <h2 id="bic">Backward-incompatible changes</h2>
+        <details><summary><div class="arrow"></div><span>MQTT</span></summary><p>The <a href="/integrations/mqtt/">MQTT</a> option moved.</p></details>
+        <h2 id="after">Farewell</h2><ul><li>Old thing</li></ul></body></html>"""
+        whole = notes.page_text(html)
+        self.assertIn("Lots of new things.", whole)
+        self.assertNotIn("Menu", whole)
+        section = notes.page_text(html, "bic")
+        self.assertEqual(section.splitlines()[0], "## Backward-incompatible changes")
+        self.assertIn("**MQTT**", section)
+        self.assertIn("The MQTT (/integrations/mqtt/) option moved.", section)
+        self.assertNotIn("Old thing", section)
+
+    def test_named_terms_and_compose_terms(self):
+        text = "Removed `--providers.docker.swarmMode`; see /integrations/zha/. PUID is unchanged."
+        self.assertEqual(notes.named(text, ["zha", "mqtt"], "/integrations/{}/"), ["zha"])
+        block = "  app:\n    command:\n      - --providers.docker.swarmMode=true\n    environment:\n      - PUID=1000\n      TZ: x\n"
+        terms = notes.compose_terms(block)
+        self.assertTrue({"--providers.docker.swarmMode", "providers.docker.swarmMode", "PUID", "TZ"} <= terms)
+        self.assertEqual(notes.named(text, terms), ["--providers.docker.swarmMode", "PUID"])
+
+    def test_undone(self):
+        self.assertEqual(notes.undone("Fine. The database is migrated and can't be rolled back. Done."), ["The database is migrated and can't be rolled back"])
+        self.assertEqual(notes.undone("Rolled back the change."), [])
+
+
+class VerdictTests(unittest.TestCase):
+    ENV = {"CLOUDFLARE_ACCOUNT_ID": "acct", "CLOUDFLARE_AI_TOKEN": "token"}
+    QUESTION = verdict.Question("Traefik", "3.6.2", "4.0.1", "traefik traefik:v3 → traefik:v4", "  traefik:\n    image: traefik:v3", notes="- Fixes.")
+
+    def test_parse(self):
+        found = verdict.parse('Here:\n```json\n{"decision": "auto", "reasons": ["a", "b", "c", "d"], "actions_needed": []}\n```')
+        self.assertEqual(found, Verdict("auto", ("a", "b", "c")))
+        self.assertTrue(found.auto)
+        self.assertFalse(Verdict("auto", (), ("Edit a file.",)).auto)
+        self.assertEqual(verdict.parse('{"decision": "manual", "reasons": ["a"]}'), Verdict("manual", ("a",)))
+        for text in ("no json", '{"decision": "maybe"}', '{"decision": "auto", "reasons": "a"}', '{"decision": "manual", "actions_needed": [1]}',
+                     '{"decision": "auto", "reasons": ["a"], "actions": ["Run the migration."]}'):
+            with self.subTest(text=text), self.assertRaises(VerdictError):
+                verdict.parse(text)
+
+    def test_the_request(self):
+        sent = []
+
+        class Reply(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        def urlopen(request, timeout):
+            sent.append((request, timeout))
+            answer = {"decision": "manual", "reasons": ["A flag was renamed."], "actions_needed": ["Rename it."]}
+            return Reply(json.dumps({"choices": [{"message": {"content": json.dumps(answer)}}]}).encode())
+
+        with mock.patch.object(verdict.urllib.request, "urlopen", urlopen):
+            found = verdict.ask(self.QUESTION, self.ENV)
+        self.assertEqual(found, Verdict("manual", ("A flag was renamed.",), ("Rename it.",)))
+        self.assertEqual(json.loads(found.said)["actions_needed"], ["Rename it."])
+        request, timeout = sent[0]
+        self.assertEqual(request.full_url, "https://api.cloudflare.com/client/v4/accounts/acct/ai/v1/chat/completions")
+        self.assertEqual(request.get_header("Authorization"), "Bearer token")
+        body = json.loads(request.data)
+        self.assertEqual((body["model"], body["max_tokens"], body["temperature"]), ("@cf/openai/gpt-oss-120b", 4096, 0))
+        self.assertEqual(body["messages"][0], {"role": "system", "content": verdict.SYSTEM})
+        self.assertIn("<notes>\n- Fixes.\n</notes>", body["messages"][1]["content"])
+        self.assertEqual(timeout, 180)
+
+    def test_errors(self):
+        def refused(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, io.BytesIO(b"daily limit"))
+
+        def failing(code: int, body: bytes):
+            def urlopen(request, timeout):
+                raise urllib.error.HTTPError(request.full_url, code, "", {}, io.BytesIO(body))
+            return urlopen
+
+        with mock.patch.object(verdict.urllib.request, "urlopen", refused), self.assertRaises(verdict.Unavailable) as caught:
+            verdict.ask(self.QUESTION, self.ENV)
+        self.assertEqual(str(caught.exception), "it has no tokens left today (HTTP 429)")
+        for code, body, said in (
+            (400, b'{"errors": [{"code": 4006, "message": "used up your daily free allocation"}]}', "it has no tokens left today (HTTP 400)"),
+            (401, b"bad token", "it refused the token (HTTP 401)"),
+        ):
+            with mock.patch.object(verdict.urllib.request, "urlopen", failing(code, body)), self.assertRaises(verdict.Unavailable) as caught:
+                verdict.ask(self.QUESTION, self.ENV)
+            self.assertEqual(str(caught.exception), said)
+        with mock.patch.object(verdict.urllib.request, "urlopen", failing(500, b"busy")), self.assertRaises(VerdictError) as caught:
+            verdict.ask(self.QUESTION, self.ENV)
+        self.assertNotIsInstance(caught.exception, verdict.Unavailable)
+        self.assertIn("HTTP 500: busy", str(caught.exception))
+        with self.assertRaises(VerdictError):
+            verdict._content({"choices": [{"message": {"content": ""}}]})
+        self.assertEqual(verdict._content({"result": {"response": "{}"}}), "{}")
+
+    def test_configured(self):
+        self.assertTrue(verdict.configured(self.ENV))
+        self.assertFalse(verdict.configured({"CLOUDFLARE_ACCOUNT_ID": "acct"}))
+
+
+class ShownTextTests(unittest.TestCase):
+    def test_an_unclosed_item_in_a_skipped_menu_keeps_the_rest_of_the_page(self):
+        page = '<nav><ul><li>Home<li>Blog</ul></nav><h2>Breaking changes</h2><p>X was removed.</p>'
+        self.assertEqual(notes.page_text(page), "## Breaking changes\n\nX was removed.")
+        self.assertEqual(notes.page_text('<nav><nav>a</nav>b</nav><p>c<span class="tooltip">d<span>e</span></span> f</p>'), "c f")
+
+    def test_cant_be_undone_is_found_quickly_with_its_sentence(self):
+        started = time.monotonic()
+        self.assertEqual(notes.undone("word " * 20000 + "so it cannot be undone"), ["word " * 17 + "word so it cannot be undone"])
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(notes.undone("Fixes. Downgrading is not supported, sorry.\nIt can't be undone, it is irreversible."),
+                         ["Downgrading is not supported, sorry", "It can't be undone, it is irreversible"])
+
+    def test_trailing_compose_comments_are_dropped(self):
+        self.assertEqual(auto._uncommented('    image: "traefik:v3"   # after a major, run the tool'), '    image: "traefik:v3"')
+        for line in ("      - 'a # b'", "      URL: http://x/#frag", '    command: ["--x=#1"]'):
+            self.assertEqual(auto._uncommented(line), line)
+
+    def test_secret_values_in_files_shown_are_hidden(self):
+        text = "- trigger: webhook\n  webhook_id: abc123\n  api_key: !secret k\n  entity_id: cover.curtains\n"
+        self.assertEqual(auto.hide_secrets(text), "- trigger: webhook\n  webhook_id: (hidden)\n  api_key: (hidden)\n  entity_id: cover.curtains\n")
+        text = ("rest_command:\n  open:\n    headers:\n      authorization: \"Bearer abc\"\n    private_key: |\n      line one\n\n      line two\n"
+                "    url: http://x\n- password: >-\n    folded\n  name: kept\n")
+        self.assertEqual(auto.hide_secrets(text), "rest_command:\n  open:\n    headers:\n      authorization: (hidden)\n    private_key: (hidden)\n"
+                                                  "    url: http://x\n- password: (hidden)\n  name: kept\n")
+
+    def test_the_inventory_takes_each_entry_s_own_name_only(self):
+        entries = {"data": {"entries": [{"domain": "duckdns", "data": {"domain": "home.duckdns.org"}}, {"domain": "mqtt", "discovery_keys": {"x": [{"domain": "zeroconf"}]}}]}}
+        self.assertEqual(sorted(set(auto._values(entries, "domain"))), ["duckdns", "mqtt"])
+
+    def test_the_journal_keeps_a_year(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder)
+        for name in ("2025-10", "2025-11", "2026-10"):
+            (folder / f"{name}.jsonl").write_text("{}\n")
+        auto.Judge(FakeDocker({}), {}, {}, today=date(2026, 11, 27), journal=folder)._journal({"app": "x"})
+        self.assertEqual(sorted(path.stem for path in folder.glob("*.jsonl")), ["2025-11", "2026-10", "2026-11"])
+
+    def test_an_answer_with_no_message_is_no_answer(self):
+        with self.assertRaises(VerdictError):
+            verdict._content({"choices": [{"message": "text"}]})
+
+
+class JudgeRuleTests(unittest.TestCase):
+    def test_code_can_only_say_no(self):
+        said = Verdict("auto", ("Only fixes.",))
+        self.assertEqual(auto.combine(said, []), said)
+        self.assertEqual(auto.combine(said, ["Names mqtt."]), Verdict("manual", ("Names mqtt.", "Only fixes.")))
+        manual = Verdict("manual", ("A step.",), ("Do it.",))
+        self.assertEqual(auto.combine(manual, []), manual)
+
+
+
+class AutoConfigTests(unittest.TestCase):
+    BASE = ConfigTests.BASE
+    load = ConfigTests.load
+    rejects = ConfigTests.rejects
+    APP = '\n[apps.x]\ntitle = "X"\ncontainers = ["x"]\nreleases = "github:a/b"\n'
+
+    def test_mistakes_stop_the_run(self):
+        app = self.BASE + self.APP
+        cases = [
+            (app + 'policy = "floating"\nauto = "yes"\n', "apps.x.auto must be one of off, shadow, on"),
+            (self.BASE + '\n[apps.x]\ntitle = "X"\ncontainers = ["x"]\nreleases = "hub:a/b"\npolicy = "floating"\nauto = "on"\n', "needs github: releases"),
+            (app + 'policy = "report"\nauto = "shadow"\n', "a report app is never changed"),
+            (app + 'policy = "semver"\nauto = "on"\n', "needs rollback = true on a semver app"),
+            (app + 'policy = "floating"\nauto = "on"\nimage = "x:1"\n', "image pins it"),
+            (app + 'policy = "floating"\ninventory_file = "/a.json"\ninventory_key = "domain"\n', "apps.x.inventory_file needs auto"),
+            (app + 'policy = "floating"\nlinked_notes = true\n', "apps.x.linked_notes needs auto"),
+            (app + 'policy = "floating"\nauto = "on"\ninventory_file = "/a.json"\n', "inventory_file and inventory_key go together"),
+            (app + 'policy = "floating"\nauto = "on"\ninventory_file = "/a.json"\ninventory_key = "k"\ninventory_match = "/x/"\n', "must hold {} once"),
+            (app + 'policy = "floating"\nauto = "on"\nlinked_notes = "yes"\n', "linked_notes must be true or false"),
+            (app + 'policy = "floating"\nauto = "on"\nrollback_files = ["/"]\n', "below /"),
+            (app + 'policy = "floating"\nauto = "on"\nrollback_files = ["/a/../b"]\n', "below /"),
+            (app + 'policy = "floating"\nauto = "on"\ncontext_files = ["a.yaml"]\n', "context_files must be a list of absolute paths"),
+            (app + 'policy = "floating"\nrollback_files = ["/a"]\n', "needs rollback = true, or auto on a floating app"),
+            (self.BASE.replace('containers = ["dockge"]', 'containers = ["dockge"]\nreleases = "github:a/b"\nauto = "on"\nrollback_files = ["/a"]'), "can't be stopped"),
+            (app + 'policy = "floating"\nwait_days = 7\n', "wait_days is for semver apps and apps with auto"),
+            (app + 'policy = "semver"\nwait_days = -1\n', "wait_days must be a whole number of days"),
+            (app + 'policy = "semver"\nwait_days = true\n', "wait_days must be a whole number of days"),
+            (app + 'policy = "semver"\nwait_days = "7"\n', "wait_days must be a whole number of days"),
+            (app + 'policy = "semver"\ncritical = 1\n', "critical must be true or false"),
+            (app + 'policy = "floating"\nauto = "on"\nauto_major = true\n', "apps.x: unknown field auto_major"),
+            (app + 'policy = "floating"\nbreaking_marker = "(breaking-change)"\n', "apps.x.breaking_marker needs auto"),
+            (app + 'policy = "semver"\nrollback = true\nauto = "on"\nbreaking_marker = "(breaking-change)"\n', "breaking_marker is for floating apps"),
+            (app + 'policy = "floating"\nauto = "on"\nbreaking_marker = "(b)"\nbreaking_names = "[{} docs]"\n', "needs breaking_marker and inventory_file"),
+            (app + 'policy = "floating"\nauto = "on"\nbreaking_marker = "(b)"\ninventory_file = "/a"\ninventory_key = "k"\nbreaking_names = "docs"\n', "breaking_names must hold {} once"),
+        ]
+        for text, message in cases:
+            with self.subTest(message=message):
+                self.rejects(text, message)
+
+    def test_only_immich_waits(self):
+        self.assertEqual({key: app.wait_days for key, app in APPS.items() if app.wait_days}, {"immich": 7})
+
+    def test_photos_dns_and_ingress_are_critical(self):
+        self.assertEqual({key for key, app in APPS.items() if app.critical}, {"immich", "adguard", "traefik"})
+
+    def test_explain_says_what_each_release_does(self):
+        hand = "emailed, installed by hand"
+        shadow = "emailed with Workers AI's verdict (shadow), installed by hand"
+        cases = [
+            ("homeassistant", "2026.11", [("patch", f"by itself, unless its notes mark a breaking change to something in use; then {shadow}"), ("minor", shadow), ("major", shadow)]),
+            ("radarr", "latest", [("patch", "by itself"), ("minor", "by itself"), ("major", shadow)]),
+            ("traefik", "v3", [("patch", "by itself"), ("minor", "by itself"), ("major", hand)]),
+            ("mosquitto", "2.1-alpine", [("patch", "by itself"), ("minor", hand), ("major", hand)]),
+            ("adguard", "v0.107.70", [("patch", "by itself"), ("minor", shadow), ("major", hand)]),
+            ("immich", "v3.1.0", [("patch", "by itself"), ("minor", "by itself after 7 days"), ("major", hand)]),
+            ("plex", "", [("newer release", hand)]),
+        ]
+        for key, tag, expected in cases:
+            with self.subTest(key=key):
+                self.assertEqual(jobs.explain(APPS[key], tag), expected)
+
+    def test_explain_with_auto_on_and_a_wait(self):
+        app = replace(APPS["homeassistant"], auto="on", wait_days=3)
+        self.assertEqual(jobs.explain(app, "2026.11")[1][1], "Workers AI is asked, 3 days after it is out: by itself if nothing needs doing by hand, else emailed")
+        self.assertEqual(jobs.explain(replace(app, releases=""), "2026.11")[1][1], "not checked: no releases to compare with")
+
+    def test_check_fails_when_a_critical_app_would_take_a_major_by_itself(self):
+        loaded = self.load(self.BASE.replace('containers = ["traefik"]', 'containers = ["traefik"]\ncritical = true'))
+        boxes = {"traefik": Box("traefik:latest", "sha256:t", "traefik", "traefik"), "dockge": Box("louislam/dockge:1", "sha256:d", "dockge", "dockge")}
+        lines = []
+        with mock.patch.object(update, "log", lines.append):
+            self.assertFalse(update.summary(FakeDocker(boxes), loaded))
+        self.assertIn("  Traefik (:latest, critical)", lines)
+        self.assertTrue(any("is critical, but :latest takes a new major by itself" in line for line in lines))
+        boxes["traefik"] = Box("traefik:v3", "sha256:t", "traefik", "traefik")
+        with mock.patch.object(update, "log", lines.append):
+            self.assertTrue(update.summary(FakeDocker(boxes), loaded))
+
+    def test_an_auto_app_loads(self):
+        loaded = self.load(self.BASE + self.APP + 'policy = "floating"\nauto = "shadow"\ninventory_file = "/i.json"\ninventory_key = "domain"\ninventory_match = "/i/{}/"\nrollback_files = ["/data/app.db"]\n')
+        app = loaded.apps["x"]
+        self.assertEqual((app.auto, app.critical, app.inventory_match, app.rollback_files), ("shadow", False, "/i/{}/", ("/data/app.db",)))
+        self.assertEqual(self.load(self.BASE).apps["traefik"].auto, "")
+
+    def test_a_major_goes_in_by_itself_only_where_config_toml_says_so(self):
+        self.assertEqual([key for key, app in APPS.items() if app.auto and app.critical], ["adguard"])
+
+    def test_the_shipped_config_is_in_shadow_mode(self):
+        modes = {key: app.auto for key, app in APPS.items() if app.auto}
+        self.assertEqual(set(modes.values()), {"shadow"})
+        for key in ("immich", "traefik", "opencloud-opencloud-1", "mosquitto", "qbittorrent", "beszel", "dockge"):
+            self.assertNotIn(key, modes)
+        self.assertNotIn("/app/data/configuration.yaml", APPS["zigbee2mqtt"].context_files)
+
+
+class AutoStateTests(StateTests):
+    def setUp(self):
+        super().setUp()
+        for name, value in (("VERDICTS", self.dir / "state" / "verdicts.tsv"), ("ASKING", self.dir / "state" / "asking.tsv")):
+            patcher = mock.patch.object(update, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_verdicts_are_kept_and_read_back(self):
+        judge = auto.Judge(FakeDocker({}), {}, {})
+        judge.fresh = [
+            ("traefik", "4.0.1", Verdict("manual", ("A | flag.", "Two."), ("Rename it.",), held=HELD_AI), "0123456789abcdef"),
+            ("seerr", "4.0.0", Verdict("auto", ("Fixes.",), held=HELD_AI), "fedcba9876543210"),
+        ]
+        with mock.patch.dict(os.environ, {"UPDATE_TODAY": "2026-11-20"}):
+            update._keep_verdicts(judge)
+        self.assertEqual(update._load_verdicts(), ({
+            ("traefik", "4.0.1"): Verdict("manual", ("A / flag.", "Two."), ("Rename it.",)),
+            ("seerr", "4.0.0"): Verdict("auto", ("Fixes.",)),
+        }, {("traefik", "4.0.1"): "0123456789abcdef", ("seerr", "4.0.0"): "fedcba9876543210"}))
+        self.assertEqual(update._load_verdicts()[0][("traefik", "4.0.1")].held, HELD_AI)
+        judge.fresh = [("traefik", "4.0.1", Verdict("manual", ("Rolled back.",)), "")]
+        with mock.patch.dict(os.environ, {"UPDATE_TODAY": "2027-12-01"}):
+            update._keep_verdicts(judge)
+        self.assertEqual(update._load_verdicts(), ({("traefik", "4.0.1"): Verdict("manual", ("Rolled back.",))}, {("traefik", "4.0.1"): ""}))
+
+    def test_verdicts_that_cant_be_kept_or_read_are_an_issue_not_a_crash(self):
+        judge = auto.Judge(FakeDocker({}), {}, {})
+        judge.fresh = [("traefik", "4.0.1", Verdict("manual", ("A flag.",)), "abc")]
+        with mock.patch.object(update, "_write", side_effect=PermissionError("verdicts.tsv")):
+            issues = update._keep_verdicts(judge)
+        self.assertEqual([issue.name for issue in issues], ["updater"])
+        self.assertIn("asks again", issues[0].detail)
+        config = replace(CONFIG, apps={"traefik": replace(APPS["traefik"], auto="on")})
+        with mock.patch.object(update, "_read_env", return_value=VerdictTests.ENV), mock.patch.object(update, "_load_verdicts", side_effect=PermissionError("verdicts.tsv")):
+            found = update._judge(FakeDocker({}), config, asking=True)
+        self.assertIn("earlier answers could not be read", found.unavailable)
+
+    def test_a_verdict_kept_before_it_said_who_gave_it_still_reads(self):
+        update.VERDICTS.parent.mkdir(parents=True, exist_ok=True)
+        update.VERDICTS.write_text("2026-11-20\ttraefik\t4.0.1\tmanual\tA flag.\t\tabc\n")
+        found = update._load_verdicts()[0][("traefik", "4.0.1")]
+        self.assertEqual((found, found.held), (Verdict("manual", ("A flag.",)), ""))
+
+    def test_a_release_with_no_answer_is_remembered_until_it_has_one(self):
+        judge = auto.Judge(FakeDocker({}), {}, {}, failures={("traefik", "4.0.1"): date(2026, 11, 20)})
+        with mock.patch.dict(os.environ, {"UPDATE_TODAY": "2026-11-21"}):
+            update._keep_verdicts(judge)
+        self.assertEqual(update._load_asking(), {("traefik", "4.0.1"): date(2026, 11, 20)})
+        judge.failures.clear()
+        update._keep_verdicts(judge)
+        self.assertFalse(update.ASKING.exists())
+
+    def test_a_release_waiting_for_an_answer_is_neither_pushed_nor_marked_as_mailed(self):
+        pending = Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, False, "pending")
+        update._remember_notices([pending])
+        self.assertEqual(update._pending([pending]), [pending])
+        (self.dir / ".env").write_text("NTFY_TOPIC=t\n")
+        update._push_releases([pending], False)
+        self.assertEqual(self.pushes, [])
+
+    def test_a_judge_needs_the_cloudflare_settings(self):
+        docker = FakeDocker({})
+        self.assertEqual(update._judge(docker, CONFIG, asking=True).unavailable,
+                         "Workers AI was not asked: CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_AI_TOKEN is missing in .env.")
+        (self.dir / ".env").write_text("CLOUDFLARE_ACCOUNT_ID=acct\nCLOUDFLARE_AI_TOKEN=token\n")
+        judge = update._judge(docker, CONFIG, asking=False)
+        self.assertEqual((judge.asking, judge.env["CLOUDFLARE_ACCOUNT_ID"], judge.unavailable), (False, "acct", ""))
+        self.assertEqual(judge.journal, update.JOURNAL)
+        quiet = replace(CONFIG, apps={key: replace(app, auto="") for key, app in APPS.items()})
+        self.assertIsNone(update._judge(docker, quiet, asking=True))
+
+    def test_a_release_mailed_while_it_waits_is_pushed_once_judged(self):
+        waiting = Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, False, "wait")
+        update._remember_notices([waiting])
+        self.assertEqual(update._pending([waiting]), [waiting])
+        judged = replace(waiting, by_hand=True, verdict="manual", reasons=("A flag was renamed.",))
+        (self.dir / ".env").write_text("NTFY_TOPIC=t\n")
+        update._push_releases([judged], False)
+        self.assertEqual([item for item, _topic, _server in self.pushes], [judged])
+
+    def test_the_reason_of_a_bump_is_kept_for_the_sunday_mail(self):
+        kept = merge_bumps([], [Bump("traefik", "3.6.2", "4.0.1", "https://x.test", "Only\tfixes.")], SUNDAY)
+        update._save_bumps(kept + [Kept("homer", "1", "2", "", SUNDAY)])
+        loaded = update._load_bumps()
+        self.assertEqual([item.as_bump() for item in loaded], [Bump("traefik", "3.6.2", "4.0.1", "https://x.test", "Only fixes."), Bump("homer", "1", "2", "")])
+        self.assertEqual(update.BUMPS.read_text().splitlines()[1], f"homer\t1\t2\t\t{SUNDAY.isoformat()}")
+
+
+class AutoMessageTests(unittest.TestCase):
+    MANUAL = Notice("traefik", "3.6.2", "4.0.1", TRAEFIK_URL, True, "manual", ("The dashboard flag was renamed.",), ("Rename --api.dashboard.", "Restart."))
+    SHADOW = Notice("seerr", "3.4.0", "4.0.0", "https://x.test", True, "shadow", ("Only fixes.",))
+    MOVED = Bump("homeassistant", "2026.11.3", "2026.12.1", "https://x.test", "Nothing set up changed.")
+
+    def test_pushes(self):
+        self.assertEqual(push.message(self.MANUAL, "t")["message"], "You run 3.6.2. A new major, install it by hand. The dashboard flag was renamed. To do: Rename --api.dashboard; Restart.")
+        self.assertEqual(push.message(self.SHADOW, "t")["message"], "You run 3.4.0. Shadow mode: it would have gone in by itself. Install it by hand. Only fixes.")
+        found = push.message(replace(self.MANUAL, held=HELD_AI), "t")
+        self.assertEqual((found["title"], found["message"]), ("Traefik 4.0.1 is out",
+            "You run 3.6.2. A new major, install it by hand. Breaking changes detected by AI. The dashboard flag was renamed. To do: Rename --api.dashboard; Restart."))
+        patch = Notice("homeassistant", "2026.11.3", "2026.11.4", "https://x.test", True, "manual", ("“Change ZHA groups (breaking-change)”", "A second reason."), held=HELD_BREAKING)
+        self.assertEqual(push.message(patch, "t")["message"],
+                         "You run 2026.11.3. Install it by hand. Breaking changes detected in the notes. “Change ZHA groups (breaking-change)”")
+        self.assertEqual(push.message(self.MOVED, "t")["message"], "Went in by itself, checked by AI, and is running.")
+
+    def test_the_mail_shows_why(self):
+        letter = pinned_letter([self.MANUAL, self.SHADOW], [self.MOVED])
+        self.assertIn("  Safe, checked by AI.", letter.text)
+        self.assertIn('>Safe · AI</span>', letter.html)
+        self.assertNotIn("Nothing set up changed", letter.html)
+        self.assertIn("  By hand. The dashboard flag was renamed. To do: Rename --api.dashboard; Restart.", letter.text)
+        self.assertIn("  Would have gone in by itself (shadow mode). Only fixes.", letter.text)
+        found = pinned_letter([replace(self.MANUAL, held=HELD_AI, reasons=("The dashboard flag was renamed.", "A second reason."))], [])
+        self.assertIn("  By hand. Breaking changes detected by AI. The dashboard flag was renamed. A second reason. To do: Rename --api.dashboard; Restart.", found.text)
+        self.assertIn(">To do</div>", letter.html)
+        self.assertIn('&#8226;&nbsp;&nbsp;</span>Rename <span style="white-space:nowrap">--api.dashboard</span></div>', letter.html)
+        self.assertEqual(letter.html.count('class="m-phone m-muted" style="display:none;'), 3)
+        self.assertIn(">Shadow</span>", letter.html)
+        self.assertNotIn("By hand.", letter.html)
+        tagged = pinned_letter([replace(self.MANUAL, held=HELD_AI), replace(self.SHADOW, verdict="manual", held=HELD_BREAKING),
+                                replace(self.SHADOW, key="homer", verdict="manual", unanswered=True)], [])
+        self.assertEqual(re.findall(r'class="(m-warn|m-info|m-quiet)"[^>]*>([^<]+)</span>', tagged.html),
+                         [("m-warn", "Breaking · AI"), ("m-warn", "Breaking"), ("m-quiet", "Not checked")])
 
 
 if __name__ == "__main__":

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import posixpath
+import shutil
 import socket
 import tarfile
 import time
@@ -129,6 +131,43 @@ class Docker:
         if status >= 300:
             raise DockerError(last_line(reply.decode(errors="replace")) or f"could not put {path} back in {name} ({status})")
 
+    def archive_to(self, name: str, path: str, target: Path) -> bool:
+        """`path` out of a container into the tar file `target`, streamed, for put_archive_file. False when `path` does not exist."""
+        query = urllib.parse.urlencode({"path": path})
+        connection = _UnixConnection(self.socket_path, timeout=300)
+        try:
+            connection.request("GET", f"{self._api()}/containers/{urllib.parse.quote(name, safe='')}/archive?{query}", headers={"Host": "localhost"})
+            response = connection.getresponse()
+            if response.status == 404:
+                response.read()
+                return False
+            if response.status >= 300:
+                raise DockerError(last_line(response.read().decode(errors="replace")) or f"could not copy {path} out of {name} ({response.status})")
+            with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as handle:
+                shutil.copyfileobj(response, handle, 1 << 20)
+            return True
+        except (OSError, HTTPException) as exc:
+            raise DockerError(str(exc)) from exc
+        finally:
+            connection.close()
+
+    def put_archive_file(self, name: str, path: str, source: Path) -> None:
+        """Put an archive_to() of `path` back where it came from, streamed. The container may be created and not yet started."""
+        query = urllib.parse.urlencode({"path": posixpath.dirname(path.rstrip("/")) or "/"})
+        connection = _UnixConnection(self.socket_path, timeout=300)
+        try:
+            with source.open("rb") as handle:
+                headers = {"Host": "localhost", "Content-Type": "application/x-tar", "Content-Length": str(source.stat().st_size)}
+                connection.request("PUT", f"{self._api()}/containers/{urllib.parse.quote(name, safe='')}/archive?{query}", body=handle, headers=headers)
+                response = connection.getresponse()
+                reply = response.read()
+            if response.status >= 300:
+                raise DockerError(last_line(reply.decode(errors="replace")) or f"could not put {path} back in {name} ({response.status})")
+        except (OSError, HTTPException) as exc:
+            raise DockerError(str(exc)) from exc
+        finally:
+            connection.close()
+
     def read_file(self, name: str, path: str) -> bytes:
         """One file out of a container, through the archive API. Nothing runs inside it."""
         data = self.archive(name, path)
@@ -197,6 +236,59 @@ class Docker:
         else:
             once()
 
+    def compose_config(self, stack: Stack) -> dict:
+        """The project as Compose resolves it, .env values included: compared in memory, never logged or sent."""
+        if not self.compose_container:
+            raise DockerError("no compose_container in config.toml")
+        code, stdout, stderr = self._exec_streams(self.compose_container, ["/usr/bin/docker", *compose_args(stack), "config", "--format", "json"])
+        if code != 0:
+            raise DockerError(last_line(stderr) or f"compose config exited {code}")
+        try:
+            return json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise DockerError(f"compose config did not print JSON: {exc}") from exc
+
+    def ensure_image(self, image: str) -> None:
+        """Pull `image` when it is not here, such as after the Sunday prune."""
+        try:
+            self._request("GET", f"/images/{urllib.parse.quote(image, safe='')}/json")
+        except DockerError:
+            name, _, digest = image.partition("@")
+            query = urllib.parse.urlencode({"fromImage": name, "tag": digest} if digest else {"fromImage": image})
+            status, data = self._open("POST", f"/images/create?{query}", None)
+            if status >= 300 or b'"error"' in data:
+                raise DockerError(last_line(data.decode(errors="replace")) or f"pull of {image} failed ({status})") from None
+
+    def run_once(self, image: str, cmd: list[str], *, entrypoint: list[str] | None = None, user: str = "", workdir: str = "",
+                 env: list[str] | None = None, binds: list[str] | None = None, volumes_from: list[str] | None = None) -> tuple[int, str]:
+        """A one-shot container with no network, removed after it exits. `image` is pulled first when missing."""
+        self.ensure_image(image)
+        spec: dict = {
+            "Image": image,
+            "Cmd": cmd,
+            "HostConfig": {"NetworkMode": "none", "Binds": binds or [], "VolumesFrom": volumes_from or []},
+        }
+        if entrypoint is not None:
+            spec["Entrypoint"] = entrypoint
+        if user:
+            spec["User"] = user
+        if workdir:
+            spec["WorkingDir"] = workdir
+        if env:
+            spec["Env"] = env
+        created = self._request("POST", "/containers/create", spec)
+        container_id = created["Id"]
+        try:
+            self._request("POST", f"/containers/{container_id}/start")
+            waited = self._request("POST", f"/containers/{container_id}/wait")
+            logs = _demux_text(self._read(f"/containers/{container_id}/logs?stdout=1&stderr=1"))
+            return int(waited.get("StatusCode") or 0), logs
+        finally:
+            try:
+                self._request("DELETE", f"/containers/{container_id}?force=1")
+            except DockerError:
+                pass
+
     def recreate_runner(self, image: str, stack: Stack) -> None:
         """Compose from a one-shot container, so the compose container is not recreating itself."""
         name = f"updates-{stack.project}-recreate"
@@ -254,6 +346,15 @@ class Docker:
         return False
 
     def _exec(self, container: str, cmd: list[str]) -> tuple[int, str]:
+        code, raw = self._exec_raw(container, cmd)
+        return code, _demux_text(raw)
+
+    def _exec_streams(self, container: str, cmd: list[str]) -> tuple[int, str, str]:
+        code, raw = self._exec_raw(container, cmd)
+        stdout, stderr = _demux(raw)
+        return code, stdout, stderr
+
+    def _exec_raw(self, container: str, cmd: list[str]) -> tuple[int, bytes]:
         created = self._request("POST", f"/containers/{urllib.parse.quote(container, safe='')}/exec", {
             "AttachStdout": True,
             "AttachStderr": True,
@@ -266,7 +367,7 @@ class Docker:
                 break
             time.sleep(0.5)
         code = info.get("ExitCode")
-        return (code if isinstance(code, int) else 1), _demux_text(raw)
+        return (code if isinstance(code, int) else 1), raw
 
     def _request(self, method: str, path: str, payload: dict | None = None):
         body = json.dumps(payload).encode() if payload is not None else None
@@ -349,6 +450,21 @@ def split_ref(ref: str) -> tuple[str, str]:
 
 
 def _demux_text(data: bytes) -> str:
+    streams = _split_streams(data)
+    if streams is None:
+        return data.decode(errors="replace")
+    return (streams[0] + b"\n" + streams[1]).decode(errors="replace")
+
+
+def _demux(data: bytes) -> tuple[str, str]:
+    """Docker's multiplexed stream as (stdout, stderr). A stream that is not multiplexed is all stdout."""
+    streams = _split_streams(data)
+    if streams is None:
+        return data.decode(errors="replace"), ""
+    return streams[0].decode(errors="replace"), streams[1].decode(errors="replace")
+
+
+def _split_streams(data: bytes) -> tuple[bytes, bytes] | None:
     stdout = bytearray()
     stderr = bytearray()
     index = 0
@@ -361,5 +477,5 @@ def _demux_text(data: bytes) -> str:
         index += 8 + size
         (stdout if kind == 1 else stderr).extend(chunk)
     if index == 0:
-        return data.decode(errors="replace")
-    return (stdout + b"\n" + stderr).decode(errors="replace")
+        return None
+    return bytes(stdout), bytes(stderr)

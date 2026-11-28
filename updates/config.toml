@@ -12,7 +12,7 @@
 #                              The tag sets how far it moves: `v3.7` patches only,
 #                              `2` minors too, `latest` everything. A newer release
 #                              past the tag goes in the Sunday mail.
-#                    semver    a patch that morning, a new minor a week after its .0,
+#                    semver    a patch that morning, a new minor wait_days after its .0,
 #                              never another major (mailed instead); not rolled back
 #                              unless rollback is set
 #                    report    never changed; a newer release goes in the Sunday mail
@@ -27,16 +27,50 @@
 #   pin_minor        semver: only patches of the running minor; a newer minor goes in
 #                    the Sunday mail and is installed by hand
 #   rollback         semver: start the previous image again if the new one is not healthy
-#   rollback_files   with rollback: files in the first container saved before the update
-#                    and put back before the previous image starts, such as a config
-#                    the new version migrates
+#   rollback_files   with rollback, or auto on a floating app: files in the first
+#                    container saved before the update and put back before the previous
+#                    image starts, such as a config or database the new version migrates.
+#                    On a volume or bind mount. With auto, the container is stopped while
+#                    they are copied to state/rollback/<key>/, and the copy stays there
+#                    until the next one
 #   hold_major       floating, for images with no major tag: a pulled image whose
 #                    version label is another major is not started; it goes in
 #                    the Sunday mail and is installed by hand
+#   wait_days        semver, or with auto: days a release it would take by itself
+#                    waits first, counted from the first release of its line (a
+#                    semver minor's .0, `2026.12.0` for `2026.12`). 0, the default,
+#                    takes it, or asks Workers AI, the first morning it is seen
+#   critical         true for an app too costly to break with a major (DNS, ingress,
+#                    photos): a new major is always installed by hand, never asked
+#                    about or taken by itself, even with auto. --check fails if its tag would take
+#                    a major anyway (`latest` with no hold_major)
 #   image            floating, one container: the only image:tag it may run
 #   version_file     JSON in the container whose "version" is the app's, for
 #                    images with no version label
 #   version_command  prints "version X.Y.Z" in the container, for the same
+#   auto             off (the default), shadow or on, for github: releases. A release
+#                    left to a hand (past a floating tag, a held major, a semver major
+#                    or pin_minor minor), except a critical app's major, is shown to
+#                    Workers AI the first morning it is seen, once, with its notes,
+#                    the compose service and the files below. If changing the tag
+#                    is all it takes, and no check
+#                    in code says otherwise, shadow says so in the push and the mail; on
+#                    installs it: the image line in the compose file, the pull, the
+#                    health check and rollback, then a local commit, never pushed.
+#                    Anything else stays by hand, with the reasons and the steps.
+#                    Needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_AI_TOKEN in .env
+#   inventory_file   with auto: JSON, or one JSON object per line, in the first
+#   inventory_key    container listing what the setup uses, and the key of each
+#   inventory_match  name in it: a breaking change that names one stays by hand.
+#                    inventory_match is how the notes name it, "{}" for the bare name
+#   context_files    with auto: files in the first container shown with the notes.
+#                    Never one with secrets: they go to Workers AI
+#   breaking_marker  with auto, floating: a release the tag takes by itself waits for
+#   breaking_names   Workers AI when a line of its notes carries this marker and names
+#                    something in the inventory, or nothing (the app itself).
+#                    breaking_names is how a line names one, "{}" for the name
+#   linked_notes     with auto: also read the pages the notes link as release notes,
+#                    a migration guide or breaking changes
 #
 # Compose project, service and files come from the labels Compose puts on each
 # container, so an override file is never dropped.
@@ -50,6 +84,9 @@ containers = ["immich_server", "immich_machine_learning"]
 members = ["immich_postgres", "immich_redis"]
 releases = "github:immich-app/immich"
 tag_prefix = "v"
+critical = true
+# A new minor waits a week, so the fixes of its first days are in.
+wait_days = 7
 
 [apps.cloudflare-tunnel]
 title = "Cloudflared"
@@ -64,6 +101,8 @@ policy = "floating"
 containers = ["traefik"]
 releases = "github:traefik/traefik"
 tag_prefix = "v"
+# All ingress. Its only releases past :v3 are majors, so it has no auto.
+critical = true
 
 [apps.uptime-kuma]
 title = "Uptime Kuma"
@@ -71,6 +110,9 @@ policy = "floating"
 containers = ["uptime-kuma"]
 releases = "github:louislam/uptime-kuma"
 version_file = "/app/package.json"
+auto = "shadow"
+linked_notes = true
+rollback_files = ["/app/data/kuma.db", "/app/data/kuma.db-wal", "/app/data/kuma.db-shm"]
 
 [apps.beszel]
 title = "Beszel"
@@ -88,18 +130,50 @@ tag_prefix = "v"
 pin_minor = true
 rollback = true
 rollback_files = ["/opt/adguardhome/conf/AdGuardHome.yaml"]
+# LAN DNS.
+critical = true
+auto = "shadow"
 
 [apps.homeassistant]
 title = "Home Assistant"
 policy = "floating"
 containers = ["homeassistant"]
 releases = "github:home-assistant/core"
+auto = "shadow"
+linked_notes = true
+# Only the domain of each integration set up goes to Workers AI.
+inventory_file = "/config/.storage/core.config_entries"
+inventory_key = "domain"
+inventory_match = "/integrations/{}/"
+context_files = ["/config/configuration.yaml", "/config/automations.yaml", "/config/scripts.yaml"]
+# A patch goes in by itself unless a line of its notes is marked a breaking change for an integration set up, or for
+# Home Assistant itself: then Workers AI is asked.
+breaking_marker = "(breaking-change)"
+breaking_names = "[{} docs]"
+rollback_files = [
+  "/config/.storage",
+  "/config/home-assistant_v2.db",
+  "/config/home-assistant_v2.db-wal",
+  "/config/home-assistant_v2.db-shm",
+]
 
 [apps.zigbee2mqtt]
 title = "Zigbee2MQTT"
 policy = "floating"
 containers = ["zigbee2mqtt"]
 releases = "github:Koenkk/zigbee2mqtt"
+auto = "shadow"
+linked_notes = true
+# Only the model of each paired device goes to Workers AI.
+inventory_file = "/app/data/database.db"
+inventory_key = "modelId"
+# Its configuration.yaml holds the network key, so it is saved, never shown.
+rollback_files = [
+  "/app/data/configuration.yaml",
+  "/app/data/database.db",
+  "/app/data/state.json",
+  "/app/data/coordinator_backup.json",
+]
 
 [apps.opencloud-opencloud-1]
 title = "OpenCloud"
@@ -122,7 +196,7 @@ releases = "github:bastienwirtz/homer"
 tag_prefix = "v"
 
 # media-automation. linuxserver publishes no major tag, so these follow
-# latest with hold_major. Updated only while running, like every app.
+# latest with hold_major.
 [apps.radarr]
 title = "Radarr"
 policy = "floating"
@@ -130,6 +204,8 @@ containers = ["radarr"]
 releases = "github:Radarr/Radarr"
 tag_prefix = "v"
 hold_major = true
+auto = "shadow"
+rollback_files = ["/config/radarr.db", "/config/radarr.db-wal", "/config/radarr.db-shm", "/config/config.xml"]
 
 [apps.sonarr]
 title = "Sonarr"
@@ -138,6 +214,8 @@ containers = ["sonarr"]
 releases = "github:Sonarr/Sonarr"
 tag_prefix = "v"
 hold_major = true
+auto = "shadow"
+rollback_files = ["/config/sonarr.db", "/config/sonarr.db-wal", "/config/sonarr.db-shm", "/config/config.xml"]
 
 [apps.prowlarr]
 title = "Prowlarr"
@@ -146,6 +224,8 @@ containers = ["prowlarr"]
 releases = "github:Prowlarr/Prowlarr"
 tag_prefix = "v"
 hold_major = true
+auto = "shadow"
+rollback_files = ["/config/prowlarr.db", "/config/prowlarr.db-wal", "/config/prowlarr.db-shm", "/config/config.xml"]
 
 [apps.qbittorrent]
 title = "qBittorrent"
@@ -161,6 +241,8 @@ containers = ["maintainerr"]
 releases = "github:Maintainerr/Maintainerr"
 tag_prefix = "v"
 version_file = "/opt/app/apps/server/package.json"
+auto = "shadow"
+rollback_files = ["/opt/data/maintainerr.sqlite", "/opt/data/maintainerr.sqlite-wal", "/opt/data/maintainerr.sqlite-shm"]
 
 [apps.seerr]
 title = "Seerr"
@@ -168,6 +250,8 @@ policy = "floating"
 containers = ["seerr"]
 releases = "github:seerr-team/seerr"
 tag_prefix = "v"
+auto = "shadow"
+rollback_files = ["/app/config/db", "/app/config/settings.json"]
 
 [apps.plex]
 title = "Plex"

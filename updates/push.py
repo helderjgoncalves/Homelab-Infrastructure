@@ -7,7 +7,7 @@ import re
 import urllib.error
 import urllib.request
 
-from mail import ICONS, Bump, Notice
+from mail import FOUND, ICONS, Bump, Notice, todo
 
 NTFY_URL = "https://ntfy.sh"
 # The repo is public, so ntfy and the phone can fetch the icons the mail uses.
@@ -40,6 +40,8 @@ def _title(bump: Bump) -> str:
 
 
 def _detail(bump: Bump) -> str:
+    if bump.reason:
+        return "Went in by itself, checked by AI, and is running."
     if bump.before and bump.before == bump.after:
         return "New build of the same version."
     return "Updated and running."
@@ -47,9 +49,14 @@ def _detail(bump: Bump) -> str:
 
 def _release_detail(notice: Notice) -> str:
     majors = [MAJOR.match(version) for version in (notice.running, notice.available)]
-    if all(majors) and majors[0].group(1) != majors[1].group(1):
-        return f"You run {notice.running}. A new major, install it by hand."
-    return f"You run {notice.running}. Install it by hand."
+    major = "A new major, install" if all(majors) and majors[0].group(1) != majors[1].group(1) else "Install"
+    # The first reason only: the mail has them all.
+    reasons = " ".join(part for part in (FOUND.get(notice.held, ""), *notice.reasons[:1]) if part)
+    if notice.verdict == "shadow":
+        return f"You run {notice.running}. Shadow mode: it would have gone in by itself. Install it by hand. {reasons}".rstrip()
+    if notice.verdict == "manual":
+        return f"You run {notice.running}. {major} it by hand. {reasons}{todo(notice.actions)}".rstrip()
+    return f"You run {notice.running}. {major} it by hand."
 
 
 def send(item: Bump | Notice, topic: str, server: str = NTFY_URL) -> None:

@@ -8,7 +8,8 @@ machine path.
                                    to ntfy, mail an error, hold the rest
   updates/update.sh --digest       Sunday noon mail, then prune unused images; no updates
   updates/update.sh --dry-run      decide only
-  updates/update.sh --check        confirm the compose container can run compose
+  updates/update.sh --check        confirm the compose container can run compose, and say what each
+                                   new release does to each app
   updates/update.sh --notify-only  mail new releases now, bump nothing
 """
 
@@ -23,14 +24,17 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import push
+from auto import Judge
 from config import Config, ConfigError, load as load_config
-from jobs import Outcome, collect_notices, run
+from jobs import Outcome, collect_notices, explain, run
 from mail import Bump, Issue, pinned_letter, send, use_titles
-from runtime import HERE, Docker, DockerError, log
+from runtime import HERE, Docker, DockerError, log, split_ref
+from verdict import Verdict, configured
 
 STATE = HERE / "state"
 NOTIFIED = STATE / "notified.tsv"
 PUSHED = STATE / "pushed.tsv"
+UNANSWERED = "unanswered"
 FAILURES = STATE / "failures.tsv"
 BUMPS = STATE / "weekly-bumps.tsv"
 DUE = STATE / "digest.due"
@@ -39,6 +43,13 @@ HOLD = STATE / "prune.hold"
 PRUNE_ERROR = STATE / "prune.error"
 UNCHECKED = STATE / "unchecked.tsv"
 UNCHECKED_DAYS = 3
+# What Workers AI said about each release, so it is asked once. Older lines are dropped.
+VERDICTS = STATE / "verdicts.tsv"
+VERDICT_DAYS = 365
+# The day each release first could not be asked: it waits a few mornings for an answer, unpushed.
+ASKING = STATE / "asking.tsv"
+# Every question to Workers AI, its answer and what was decided, one file a month, to see how it does.
+JOURNAL = STATE / "workers-ai"
 LOCK = STATE / "lock"
 # Longer than the slowest possible morning run, shorter than a day.
 LOCK_STALE = 4 * 3600
@@ -66,7 +77,7 @@ def main(argv: list[str]) -> int:
     use_titles(config.titles)
     docker.compose_container = config.compose_container
     if "--check" in argv:
-        return check(docker)
+        return check(docker, config)
     stale = None
     if not dry:
         taken, stale = _lock()
@@ -81,27 +92,31 @@ def main(argv: list[str]) -> int:
         if stale:
             log(f"cleared the lock of a run that started {stale} and did not finish")
         if digest:
-            notices = _notices(docker, config)
+            notices = _notices(docker, config, _judge(docker, config, asking=False))
             _push_releases(notices, dry)
             code = _send_report(notices, [], [], dry, weekly=True)
             _weekly_prune(docker, dry)
             return code
         if "--notify-only" in argv:
-            notices = _notices(docker, config)
+            notices = _notices(docker, config, _judge(docker, config, asking=False))
             _push_releases(notices, dry)
             return _send_notices(notices, dry)
         outcome = Outcome()
+        # A dry run asks too, to show what Workers AI says, but keeps nothing.
+        judge = _judge(docker, config, asking=True)
         try:
-            outcome = run(docker, config, dry, _load_rejected(), outcome)
+            outcome = run(docker, config, dry, _load_rejected(), outcome, judge)
         except SystemExit:
             if not dry:
                 _keep_rollback_state(outcome)
+                _keep_verdicts(judge)
                 _save_bumps(merge_bumps(_load_bumps(), outcome.bumps, _clock()[1]))
             raise
         if stale:
             outcome.issues.append(Issue("updater", f"The run that started {stale} did not finish. Its lock was cleared."))
         if not dry:
             _keep_rollback_state(outcome)
+            outcome.issues.extend(_keep_verdicts(judge))
             outcome.issues.extend(_unchecked_issues(outcome.unchecked, _clock()[1]))
             outcome.issues.extend(_prune_error())
         _push(outcome.bumps, dry)
@@ -128,14 +143,40 @@ def _config_failed(error: str, digest: bool) -> int:
     return 1
 
 
-def check(docker: Docker) -> int:
+def check(docker: Docker, config: Config) -> int:
     try:
         code, output = docker.exec(docker.compose_container, ["/usr/bin/docker", "compose", "version"])
     except DockerError as exc:
         log(f"compose check failed: {exc}")
         return 1
     log(output.strip() or f"compose exited {code}")
-    return 0 if code == 0 else 1
+    summed = summary(docker, config)
+    return 0 if code == 0 and summed else 1
+
+
+def summary(docker: Docker, config: Config) -> bool:
+    """Log what a new patch, minor and major does to each app. False when a critical app would take a major by itself."""
+    sound = True
+    log("what each new release does:")
+    for app in config.apps.values():
+        about, tag = [], ""
+        if app.policy != "report" or app.containers:
+            try:
+                info = docker.inspect(app.main)
+            except DockerError:
+                log(f"  {app.title}: {app.main} is not found, so its tag is unknown")
+                continue
+            tag = split_ref(info.image.split("@", 1)[0])[1]
+            about.append(f":{tag}" if info.status == "running" else f":{tag}, {info.status}")
+        if app.critical:
+            about.append("critical")
+        log(f"  {app.title} ({', '.join(about)})" if about else f"  {app.title}")
+        for kind, outcome in explain(app, tag):
+            log(f"    {kind:<14}{outcome}")
+            if app.critical and kind == "major" and outcome == "by itself":
+                log(f"    {app.title} is critical, but :{tag} takes a new major by itself: give the tag a major, such as :v3, or set hold_major")
+                sound = False
+    return sound
 
 
 @dataclass(frozen=True)
@@ -145,9 +186,10 @@ class Kept:
     after: str
     url: str
     since: date
+    reason: str = ""
 
     def as_bump(self) -> Bump:
-        return Bump(self.key, self.before, self.after, self.url)
+        return Bump(self.key, self.before, self.after, self.url, self.reason)
 
 
 def digest_due(today: date, kept: list[Kept], retry: bool = False, wday: int | None = None) -> bool:
@@ -164,9 +206,9 @@ def merge_bumps(kept: list[Kept], bumps: list[Bump], today: date) -> list[Kept]:
     for bump in bumps:
         previous = by_key.get(bump.key)
         if previous is None:
-            by_key[bump.key] = Kept(bump.key, bump.before, bump.after, bump.url, today)
+            by_key[bump.key] = Kept(bump.key, bump.before, bump.after, bump.url, today, bump.reason)
             continue
-        by_key[bump.key] = Kept(bump.key, previous.before, bump.after, bump.url or previous.url, previous.since)
+        by_key[bump.key] = Kept(bump.key, previous.before, bump.after, bump.url or previous.url, previous.since, bump.reason)
     return list(by_key.values())
 
 
@@ -215,15 +257,102 @@ def _send_notices(notices, dry: bool) -> int:
     return failed
 
 
-def _notices(docker: Docker, config: Config) -> list:
+def _notices(docker: Docker, config: Config, judge: Judge | None = None) -> list:
     notices: list = []
     try:
         running = docker.names()
     except DockerError as exc:
         log(f"could not list containers: {exc}")
         running = set()
-    collect_notices(docker, config, running, notices)
+    collect_notices(docker, config, running, notices, judge)
     return notices
+
+
+def _judge(docker: Docker, config: Config, asking: bool) -> Judge | None:
+    """Workers AI for the apps with auto. Without its settings in .env, their releases go out by hand, saying so."""
+    if not any(app.auto for app in config.apps.values()):
+        return None
+    env = _read_env() or {}
+    unavailable = ""
+    if not configured(env):
+        log("auto is set, but CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_AI_TOKEN is missing in .env: releases stay by hand")
+        unavailable = "Workers AI was not asked: CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_AI_TOKEN is missing in .env."
+    try:
+        known, prints = _load_verdicts()
+        failures = _load_asking()
+    except (OSError, UnicodeDecodeError) as exc:
+        log(f"the Workers AI answers could not be read: {exc}")
+        known, prints, failures = {}, {}, {}
+        unavailable = f"Workers AI was not asked: its earlier answers could not be read ({exc})."
+    return Judge(docker, env, known, asking, prints, failures, _clock()[1], unavailable, JOURNAL)
+
+
+def _load_verdicts() -> tuple[dict[tuple[str, str], Verdict], dict[tuple[str, str], str]]:
+    """The answers, and the fingerprint of what each was given for ("" holds whatever is shown later)."""
+    known, prints = {}, {}
+    if VERDICTS.is_file():
+        for line in VERDICTS.read_text().splitlines():
+            parts = line.split("\t")
+            if len(parts) in (7, 8) and parts[3] in ("auto", "manual"):
+                known[(parts[1], parts[2])] = Verdict(parts[3], _items(parts[4]), _items(parts[5]), held=parts[7] if len(parts) == 8 else "")
+                prints[(parts[1], parts[2])] = parts[6]
+    return known, prints
+
+
+def _load_asking() -> dict[tuple[str, str], date]:
+    failures = {}
+    if ASKING.is_file():
+        for line in ASKING.read_text().splitlines():
+            parts = line.split("\t")
+            try:
+                if len(parts) == 3:
+                    failures[(parts[0], parts[1])] = date.fromisoformat(parts[2])
+            except ValueError:
+                continue
+    return failures
+
+
+def _keep_verdicts(judge: Judge | None) -> list[Issue]:
+    """Add this run's answers, a release asked about again replacing its line, and the releases still with no answer."""
+    try:
+        _write_verdicts(judge)
+    except (OSError, UnicodeDecodeError) as exc:
+        log(f"the Workers AI answers could not be kept: {exc}")
+        return [Issue("updater", f"The Workers AI answers could not be kept, so the next morning asks again. {exc}")]
+    return []
+
+
+def _write_verdicts(judge: Judge | None) -> None:
+    if judge is None:
+        return
+    today = _clock()[1]
+    if judge.fresh:
+        rows: dict[tuple[str, str], str] = {}
+        if VERDICTS.is_file():
+            for line in VERDICTS.read_text().splitlines():
+                parts = line.split("\t")
+                try:
+                    recent = len(parts) in (7, 8) and (today - date.fromisoformat(parts[0])).days <= VERDICT_DAYS
+                except ValueError:
+                    recent = False
+                if recent:
+                    rows[(parts[1], parts[2])] = line
+        for key, version, found, shown in judge.fresh:
+            rows[(key, version)] = "\t".join((today.isoformat(), key, version, found.decision, _joined(found.reasons), _joined(found.actions), shown, found.held))
+        _write(VERDICTS, "".join(f"{line}\n" for line in rows.values()))
+    failures = {key: first for key, first in judge.failures.items() if (today - first).days <= VERDICT_DAYS}
+    if failures:
+        _write(ASKING, "".join(f"{key}\t{version}\t{first.isoformat()}\n" for (key, version), first in sorted(failures.items())))
+    else:
+        ASKING.unlink(missing_ok=True)
+
+
+def _joined(items: tuple[str, ...]) -> str:
+    return " | ".join(" ".join(item.replace("|", "/").split()) for item in items)
+
+
+def _items(text: str) -> tuple[str, ...]:
+    return tuple(item for item in text.split(" | ") if item)
 
 
 def _weekly_prune(docker: Docker, dry: bool) -> None:
@@ -311,14 +440,14 @@ def _load_bumps() -> list[Kept]:
     kept: list[Kept] = []
     for line in BUMPS.read_text().splitlines():
         parts = line.split("\t")
-        if len(parts) != 5:
+        if len(parts) not in (5, 6):
             continue
-        key, before, after, url, raw = parts
+        key, before, after, url, raw = parts[:5]
         try:
             since = date.fromisoformat(raw)
         except ValueError:
             continue
-        kept.append(Kept(key, before, after, url, since))
+        kept.append(Kept(key, before, after, url, since, parts[5] if len(parts) == 6 else ""))
     return kept
 
 
@@ -326,7 +455,10 @@ def _save_bumps(kept: list[Kept]) -> None:
     if not kept:
         BUMPS.unlink(missing_ok=True)
         return
-    _write(BUMPS, "".join(f"{item.key}\t{item.before}\t{item.after}\t{item.url}\t{item.since.isoformat()}\n" for item in kept))
+    _write(BUMPS, "".join(
+        f"{item.key}\t{item.before}\t{item.after}\t{item.url}\t{item.since.isoformat()}" + (f"\t{' '.join(item.reason.split())}" if item.reason else "") + "\n"
+        for item in kept
+    ))
 
 
 def _fresh(issues: list[Issue]) -> list[Issue]:
@@ -358,9 +490,14 @@ def _remember_failures(issues: list[Issue]) -> None:
 
 
 def _remember_notices(notices) -> None:
-    """Add to what was sent. A check that failed this time must not forget its release."""
+    """Add to what was sent. A check that failed this time must not forget its release.
+
+    A release still waiting for Workers AI, or about to go in by itself, is not remembered: what comes next is mailed and pushed.
+    """
     rows = {key: "\t".join(parts) for key, parts in _notified().items()}
     for notice in notices:
+        if notice.verdict in ("wait", "pending", "auto"):
+            continue
         rows[notice.key] = _line(notice)
     _write(NOTIFIED, "".join(f"{line}\n" for line in rows.values()))
 
@@ -410,27 +547,40 @@ def _push(bumps, dry: bool) -> None:
 
 
 def _push_releases(notices, dry: bool) -> None:
-    """One push per release to install by hand, the first time it is seen. One that fails is tried again the next morning."""
+    """One push per release to install by hand, the first time it is seen. One that fails is tried again the next morning.
+
+    A release pushed before Workers AI could answer is pushed once more with the answer, even once the Sunday mail listed it.
+    """
     mailed = {(parts[0], parts[2]) for parts in _notified().values()}
-    pushed = {release for release in _pushed() if release not in mailed}
-    fresh = [notice for notice in _pending(notices) if notice.by_hand and (notice.key, notice.available) not in pushed]
+    before = _pushed()
+    pushed = {release: mark for release, mark in before.items() if release not in mailed or mark == UNANSWERED}
+    seen = {(notice.key, notice.available) for notice in notices}
+    # Once a newer release of the app is out, it has no answer to wait for. A run that doesn't list it (the Sunday mail, an app
+    # not checked that morning) proves nothing.
+    newer = {notice.key for notice in notices}
+    pushed = {release: mark for release, mark in pushed.items() if mark != UNANSWERED or release in seen or release[0] not in newer}
+    fresh = {(notice.key, notice.available): notice for notice in _pending(notices) if notice.by_hand and (notice.key, notice.available) not in pushed}
+    for notice in notices:
+        if notice.by_hand and not notice.unanswered and pushed.get((notice.key, notice.available)) == UNANSWERED:
+            fresh[(notice.key, notice.available)] = notice
     if dry:
-        for notice in fresh:
+        for notice in fresh.values():
             log(f"would push: {notice.title} {notice.available} is out")
         return
-    sent = _send_pushes(fresh)
+    sent = _send_pushes(list(fresh.values()))
     for notice in sent:
         log(f"pushed {notice.title} {notice.available} is out")
-    rows = pushed | {(notice.key, notice.available) for notice in sent}
-    if rows != _pushed():
-        _write(PUSHED, "".join(f"{key}\t{available}\n" for key, available in sorted(rows)))
+    rows = {**pushed, **{(notice.key, notice.available): UNANSWERED if notice.unanswered else "" for notice in sent}}
+    if rows != before:
+        _write(PUSHED, "".join(f"{key}\t{available}\t{mark}\n" if mark else f"{key}\t{available}\n" for (key, available), mark in sorted(rows.items())))
 
 
-def _pushed() -> set[tuple[str, str]]:
+def _pushed() -> dict[tuple[str, str], str]:
+    """What was pushed, each with UNANSWERED when Workers AI had not answered yet."""
     if not PUSHED.is_file():
-        return set()
+        return {}
     rows = (line.split("\t") for line in PUSHED.read_text().splitlines())
-    return {(parts[0], parts[1]) for parts in rows if len(parts) == 2}
+    return {(parts[0], parts[1]): (parts[2] if len(parts) == 3 else "") for parts in rows if len(parts) in (2, 3)}
 
 
 def _send_pushes(items: list) -> list:

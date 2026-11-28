@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 SEMVER = re.compile(r"\d+(?:\.\d+){1,5}")
-MINOR_WAIT = timedelta(days=7)
+# A beta's tag, such as 2.0.0-beta.1 or 2026.11.0b0: the version it leads to, and a suffix.
+PRERELEASE = re.compile(r"v?(\d+(?:\.\d+){1,5})[-.+]?[A-Za-z][\w.+-]*")
 USER_AGENT = "homelab-updates"
 
 
@@ -21,6 +22,8 @@ class Release:
     published: datetime | None
     prerelease: bool = False
     draft: bool = False
+    # The release notes, from GitHub. Docker Hub tags have none.
+    notes: str = ""
 
 
 def parse_version(value: str) -> tuple[int, ...] | None:
@@ -41,10 +44,10 @@ def _pad(version: tuple[int, ...], size: int) -> tuple[int, ...]:
     return version + (0,) * (size - len(version))
 
 
-def choose(current: str, releases: list[Release], now: datetime, pin_minor: bool = False) -> tuple[str | None, Release | None]:
+def choose(current: str, releases: list[Release], now: datetime, pin_minor: bool = False, wait: timedelta = timedelta(0)) -> tuple[str | None, Release | None]:
     """Return (tag to install, newer release that is not installed).
 
-    A x.y.0 release is eligible a week after it was published. Any patch,
+    A x.y.0 release is eligible `wait` after it was published. Any patch,
     including a patch of a newer minor, is eligible immediately. With
     `pin_minor`, only patches of the running minor are; the newest other
     minor is returned as not installed. A newer major is never installed; it
@@ -69,7 +72,7 @@ def choose(current: str, releases: list[Release], now: datetime, pin_minor: bool
             if waiting is None or newer(release.version, waiting.version):
                 waiting = release
             continue
-        if _eligible(current_version, release, now):
+        if _eligible(current_version, release, now, wait):
             if best is None or newer(release.version, best.version):
                 best = release
         elif _is_new_minor(current_version, release) and (waiting is None or newer(release.version, waiting.version)):
@@ -79,12 +82,12 @@ def choose(current: str, releases: list[Release], now: datetime, pin_minor: bool
     return (best.tag if best else None), waiting or major
 
 
-def _eligible(current: tuple[int, ...], release: Release, now: datetime) -> bool:
-    if not _is_new_minor(current, release):
+def _eligible(current: tuple[int, ...], release: Release, now: datetime, wait: timedelta) -> bool:
+    if not _is_new_minor(current, release) or not wait:
         return True
     if release.published is None:
         return False
-    return now - release.published >= MINOR_WAIT
+    return now - release.published >= wait
 
 
 def _minor(version: tuple[int, ...]) -> int:
@@ -96,10 +99,10 @@ def _is_new_minor(current: tuple[int, ...], release: Release) -> bool:
     return _minor(release.version) != _minor(current) and patch == 0
 
 
-def wait_note(release: Release) -> str:
+def wait_note(release: Release, wait: timedelta) -> str:
     if release.published is None:
         return f"{release.tag} is a new minor and its publish date could not be read, so it waits"
-    eligible = (release.published + MINOR_WAIT).date().isoformat()
+    eligible = (release.published + wait).date().isoformat()
     return f"{release.tag} published {release.published.date().isoformat()}, eligible {eligible}"
 
 
@@ -120,7 +123,12 @@ def github_releases(repo: str) -> list[Release]:
     )
     releases: list[Release] = []
     for item in payload:
-        version = parse_version(item.get("tag_name", ""))
+        tag = item.get("tag_name", "")
+        prerelease = bool(item.get("prerelease"))
+        version = parse_version(tag)
+        if version is None and prerelease:
+            match = PRERELEASE.fullmatch(tag.strip())
+            version = parse_version(match.group(1)) if match else None
         if version is None:
             continue
         published = item.get("published_at")
@@ -128,8 +136,9 @@ def github_releases(repo: str) -> list[Release]:
             version=version,
             tag=item["tag_name"],
             published=_parse_time(published) if published else None,
-            prerelease=bool(item.get("prerelease")),
+            prerelease=prerelease,
             draft=bool(item.get("draft")),
+            notes=str(item.get("body") or ""),
         ))
     return releases
 
