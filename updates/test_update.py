@@ -2833,7 +2833,7 @@ class AutoConfigTests(unittest.TestCase):
         shadow = "emailed with Workers AI's verdict (shadow), installed by hand"
         cases = [
             ("homeassistant", "2026.11", [("patch", f"by itself, unless its notes mark a breaking change to something in use; then {shadow}"), ("minor", shadow), ("major", shadow)]),
-            ("radarr", "latest", [("patch", "by itself"), ("minor", "by itself"), ("major", shadow)]),
+            ("radarr", "latest", [("patch", "by itself"), ("minor", "by itself"), ("major", "Workers AI is asked: by itself if nothing needs doing by hand, else emailed")]),
             ("traefik", "v3", [("patch", "by itself"), ("minor", "by itself"), ("major", hand)]),
             ("mosquitto", "2.1-alpine", [("patch", "by itself"), ("minor", hand), ("major", hand)]),
             ("adguard", "v0.107.70", [("patch", "by itself"), ("minor", shadow), ("major", hand)]),
@@ -2870,9 +2870,11 @@ class AutoConfigTests(unittest.TestCase):
     def test_a_major_goes_in_by_itself_only_where_config_toml_says_so(self):
         self.assertEqual([key for key, app in APPS.items() if app.auto and app.critical], ["adguard"])
 
-    def test_the_shipped_config_is_in_shadow_mode(self):
+    def test_the_shipped_config_lets_only_the_low_risk_apps_in_by_themselves(self):
         modes = {key: app.auto for key, app in APPS.items() if app.auto}
-        self.assertEqual(set(modes.values()), {"shadow"})
+        self.assertEqual({key for key, mode in modes.items() if mode == "on"}, {"uptime-kuma", "radarr", "sonarr", "prowlarr", "maintainerr", "seerr"})
+        self.assertEqual({key for key, mode in modes.items() if mode == "shadow"}, {"adguard", "homeassistant", "zigbee2mqtt"})
+        self.assertEqual([key for key, app in APPS.items() if app.critical and app.auto == "on"], [])
         for key in ("immich", "traefik", "opencloud-opencloud-1", "mosquitto", "qbittorrent", "beszel", "dockge"):
             self.assertNotIn(key, modes)
         self.assertNotIn("/app/data/configuration.yaml", APPS["zigbee2mqtt"].context_files)

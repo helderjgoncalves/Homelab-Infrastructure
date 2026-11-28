@@ -110,7 +110,7 @@ policy = "floating"
 containers = ["uptime-kuma"]
 releases = "github:louislam/uptime-kuma"
 version_file = "/app/package.json"
-auto = "shadow"
+auto = "on"
 linked_notes = true
 rollback_files = ["/app/data/kuma.db", "/app/data/kuma.db-wal", "/app/data/kuma.db-shm"]
 
@@ -204,7 +204,7 @@ containers = ["radarr"]
 releases = "github:Radarr/Radarr"
 tag_prefix = "v"
 hold_major = true
-auto = "shadow"
+auto = "on"
 rollback_files = ["/config/radarr.db", "/config/radarr.db-wal", "/config/radarr.db-shm", "/config/config.xml"]
 
 [apps.sonarr]
@@ -214,7 +214,7 @@ containers = ["sonarr"]
 releases = "github:Sonarr/Sonarr"
 tag_prefix = "v"
 hold_major = true
-auto = "shadow"
+auto = "on"
 rollback_files = ["/config/sonarr.db", "/config/sonarr.db-wal", "/config/sonarr.db-shm", "/config/config.xml"]
 
 [apps.prowlarr]
@@ -224,7 +224,7 @@ containers = ["prowlarr"]
 releases = "github:Prowlarr/Prowlarr"
 tag_prefix = "v"
 hold_major = true
-auto = "shadow"
+auto = "on"
 rollback_files = ["/config/prowlarr.db", "/config/prowlarr.db-wal", "/config/prowlarr.db-shm", "/config/config.xml"]
 
 [apps.qbittorrent]
@@ -241,7 +241,7 @@ containers = ["maintainerr"]
 releases = "github:Maintainerr/Maintainerr"
 tag_prefix = "v"
 version_file = "/opt/app/apps/server/package.json"
-auto = "shadow"
+auto = "on"
 rollback_files = ["/opt/data/maintainerr.sqlite", "/opt/data/maintainerr.sqlite-wal", "/opt/data/maintainerr.sqlite-shm"]
 
 [apps.seerr]
@@ -250,7 +250,7 @@ policy = "floating"
 containers = ["seerr"]
 releases = "github:seerr-team/seerr"
 tag_prefix = "v"
-auto = "shadow"
+auto = "on"
 rollback_files = ["/app/config/db", "/app/config/settings.json"]
 
 [apps.plex]
