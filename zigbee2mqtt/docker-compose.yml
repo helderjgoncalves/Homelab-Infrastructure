@@ -6,9 +6,9 @@ services:
   mosquitto:
     # Loopback only. Home Assistant is on the host network and uses
     # 127.0.0.1:1883. Zigbee2MQTT uses the same address.
-    # updates/ takes 2.1 patches; a new minor is mailed, moved to by hand.
-    # 2.1 is only published as -alpine.
-    image: eclipse-mosquitto:2.1-alpine
+    # updates/ takes 2.x; a new major is mailed, moved to by hand. :2 is the
+    # -alpine image: 2.1 and later are only published that way.
+    image: eclipse-mosquitto:2
     container_name: mosquitto
     restart: unless-stopped
     network_mode: host

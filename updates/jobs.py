@@ -446,7 +446,7 @@ def _outside_notice(docker: Docker, notices: list[Notice], app: App, judge: auto
     if current is None:
         log(f"could not read the {app.main} version, so releases past :{tag} are not checked")
         return
-    releases = _releases(app, suffix)
+    releases = _releases(app, suffix or app.variant)
     found = latest_stable(releases)
     if found is None or not newer(found.version, current) or found.version[:len(prefix)] == prefix:
         return

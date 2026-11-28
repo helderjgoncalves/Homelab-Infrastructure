@@ -48,6 +48,8 @@
 #   version_file     JSON in the container whose "version" is the app's, for
 #                    images with no version label
 #   version_command  prints "version X.Y.Z" in the container, for the same
+#   variant          hub: the suffix every release tag carries (`-alpine`), when the
+#                    tag the containers run has none, such as `2`
 #   auto             off (the default), shadow or on, for github: releases. A release
 #                    left to a hand (past a floating tag, a held major, a semver major
 #                    or pin_minor minor), except a critical app's major, is shown to
@@ -191,6 +193,8 @@ title = "Mosquitto"
 policy = "floating"
 containers = ["mosquitto"]
 releases = "hub:library/eclipse-mosquitto"
+# Since 2.1 every release is tagged -alpine only; :2 has no suffix, so this says which tags are releases.
+variant = "-alpine"
 
 [apps.homer]
 title = "Homer"

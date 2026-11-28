@@ -24,7 +24,7 @@ AUTO = ("off", "shadow", "on")
 AUTO_FIELDS = ("inventory_file", "inventory_key", "inventory_match", "context_files", "linked_notes", "breaking_marker", "breaking_names")
 FIELDS = {
     "title", "policy", "containers", "members", "releases", "tag_prefix", "pin_minor", "rollback", "rollback_files",
-    "image", "version_file", "version_command", "hold_major", "wait_days", "critical", "auto", *AUTO_FIELDS,
+    "image", "version_file", "version_command", "hold_major", "wait_days", "critical", "auto", "variant", *AUTO_FIELDS,
 }
 
 
@@ -63,6 +63,8 @@ class App:
     # something in the inventory, or nothing: a change to the app itself. breaking_names is how a line names one.
     breaking_marker: str = ""
     breaking_names: str = ""
+    # hub: the tag variant every release is published with (`-alpine`), when the tag the containers run has none.
+    variant: str = ""
 
     @property
     def main(self) -> str:
@@ -211,10 +213,14 @@ def _app(file: str, key: str, table) -> App:
         raise ConfigError(f"{where}: version_file or version_command, not both")
     if version_file and not version_file.startswith("/"):
         raise ConfigError(f"{where}.version_file must be an absolute path in the container")
+    variant = _text(where, table, "variant")
+    if variant and (not variant.startswith("-") or len(variant) < 2 or not releases.startswith("hub:")):
+        raise ConfigError(f"{where}.variant is a tag suffix such as -alpine, for hub: releases")
     return App(
         key, title, policy, containers, members, releases, _text(where, table, "tag_prefix"),
         image, version_file, tuple(command), pin_minor, rollback, rollback_files, hold_major, wait_days, critical,
         auto, inventory_file, inventory_key, inventory_match, context_files, linked_notes, breaking_marker, breaking_names,
+        variant,
     )
 
 

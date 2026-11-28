@@ -677,6 +677,13 @@ class OutsideTests(unittest.TestCase):
         self.hub.assert_called_once_with("library/eclipse-mosquitto", "-alpine")
         self.assertEqual(notices, [Notice("mosquitto", "2.1.4", "2.2.0", "https://hub.docker.com/_/eclipse-mosquitto/tags")])
 
+    def test_a_major_tag_with_no_suffix_reads_the_variant_config_names(self):
+        docker = FakeDocker({"mosquitto": Box("eclipse-mosquitto:2", "mq", "zigbee2mqtt", "mosquitto")}, versions={"mq": "2.1.4"})
+        self.assertEqual(self.notices(docker, hub=[release("2.2.0", 0)]), [])
+        self.hub.assert_called_once_with("library/eclipse-mosquitto", "-alpine")
+        notices = self.notices(docker, hub=[release("2.2.0", 0), release("3.0.0", 0)])
+        self.assertEqual(notices, [Notice("mosquitto", "2.1.4", "3.0.0", "https://hub.docker.com/_/eclipse-mosquitto/tags")])
+
     def test_a_digest_pinned_tag_is_read_without_the_digest(self):
         docker = FakeDocker({"zigbee2mqtt": Box("ghcr.io/koenkk/zigbee2mqtt:2.14@sha256:00", "z", "zigbee2mqtt", "zigbee2mqtt")}, versions={"z": "2.14.3"})
         self.assertEqual([notice.available for notice in self.notices(docker, [release("2.15.0", 0)])], ["2.15.0"])
@@ -762,6 +769,9 @@ class StateTests(unittest.TestCase):
             "HOLD": state / "prune.hold",
             "PRUNE_ERROR": state / "prune.error",
             "UNCHECKED": state / "unchecked.tsv",
+            "VERDICTS": state / "verdicts.tsv",
+            "ASKING": state / "asking.tsv",
+            "JOURNAL": state / "workers-ai",
             "LOCK": state / "lock",
         }
         for name, value in paths.items():
@@ -1579,6 +1589,8 @@ containers = ["dockge"]
             (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nrollback = true\nrollback_files = ["a"]\n', "absolute paths"),
             (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nhold_major = "yes"\n', "hold_major must be true or false"),
             (self.BASE + app + 'policy = "semver"\ncontainers = ["x"]\nreleases = "github:a/b"\nhold_major = true\n', "hold_major is for floating apps"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nreleases = "github:a/b"\nvariant = "-alpine"\n', "for hub: releases"),
+            (self.BASE + app + 'policy = "floating"\ncontainers = ["x"]\nreleases = "hub:a/b"\nvariant = "alpine"\n', "a tag suffix such as -alpine"),
         ]
         for text, message in cases:
             with self.subTest(message=message):
