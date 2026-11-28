@@ -139,17 +139,15 @@ title = "Home Assistant"
 policy = "floating"
 containers = ["homeassistant"]
 releases = "github:home-assistant/core"
-auto = "shadow"
+# Calendar versions: a patch can break things as well as a new month. The compose file pins the exact version, so
+# every release is past the tag and Workers AI decides on each one.
+auto = "on"
 linked_notes = true
 # Only the domain of each integration set up goes to Workers AI.
 inventory_file = "/config/.storage/core.config_entries"
 inventory_key = "domain"
 inventory_match = "/integrations/{}/"
 context_files = ["/config/configuration.yaml", "/config/automations.yaml", "/config/scripts.yaml"]
-# A patch goes in by itself unless a line of its notes is marked a breaking change for an integration set up, or for
-# Home Assistant itself: then Workers AI is asked.
-breaking_marker = "(breaking-change)"
-breaking_names = "[{} docs]"
 rollback_files = [
   "/config/.storage",
   "/config/home-assistant_v2.db",

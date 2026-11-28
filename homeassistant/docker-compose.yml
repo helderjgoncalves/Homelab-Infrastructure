@@ -1,11 +1,12 @@
 name: homeassistant
 services:
   homeassistant:
-    # Holds state (.storage, recorder DB) and migrates it in the monthly
-    # releases, which also carry breaking changes. updates/ takes the patches
-    # of this month's tag and rolls one back if it is not healthy. A new month
-    # is mailed: read its breaking changes, take a backup, move the tag.
-    image: ghcr.io/home-assistant/home-assistant:2026.11
+    # Holds state (.storage, recorder DB) and migrates it. Calendar versions:
+    # a patch can break things as well as a new month, so the exact version
+    # is pinned. updates/ asks Workers AI about each new release and, when
+    # nothing needs a hand, moves this tag itself, saving .storage and the DB
+    # first and rolling back if it is not healthy; otherwise it is mailed.
+    image: ghcr.io/home-assistant/home-assistant:2026.11.3
     container_name: homeassistant
     restart: unless-stopped
     # Host networking is the HA-recommended mode: required for mDNS / SSDP /

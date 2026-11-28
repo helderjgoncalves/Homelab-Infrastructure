@@ -2251,6 +2251,22 @@ class HomeAssistantAutoTests(AutoCase):
         self.assertEqual([(bump.before, bump.after) for bump in outcome.bumps], [("2026.11.3", "2026.12.1")])
         self.assertIn("home-assistant:2026.12\n", (self.dir / "homeassistant" / "docker-compose.yml").read_text())
 
+    def test_an_exact_pin_asks_about_a_patch_and_moves_to_its_exact_tag(self):
+        image = "ghcr.io/home-assistant/home-assistant:2026.11.3"
+        path = self.compose_file("homeassistant", f"services:\n  homeassistant:\n    image: {image}\n")
+        paths = self.docker.paths
+        self.docker = FileDocker(
+            {"homeassistant": Box(image, "old", "homeassistant", "homeassistant", (str(path),))},
+            {"ghcr.io/home-assistant/home-assistant:2026.11.4": "new"},
+            {"old": "2026.11.3", "new": "2026.11.4"},
+        )
+        self.docker.paths.update(paths)
+        self.releases = [noted("2026.11.3", 40), noted("2026.11.4", 2, "- Fix a thing.")]
+        outcome = self.collect("")
+        self.assertEqual(len(self.asked), 1)
+        self.assertEqual([(bump.before, bump.after) for bump in outcome.bumps], [("2026.11.3", "2026.11.4")])
+        self.assertIn("home-assistant:2026.11.4\n", path.read_text())
+
 
 class HomeAssistantPatchTests(AutoCase):
     """A patch the 2026.11 tag takes by itself: asked about only when its notes mark a breaking change to something set up."""
@@ -2269,7 +2285,7 @@ class HomeAssistantPatchTests(AutoCase):
         self.docker.paths[("homeassistant", "/config/.storage/core.config_entries")] = json.dumps(entries).encode()
         for name in ("configuration", "automations", "scripts"):
             self.docker.paths[("homeassistant", f"/config/{name}.yaml")] = b""
-        self.app = replace(APPS["homeassistant"], auto="on", linked_notes=False, rollback_files=())
+        self.app = replace(APPS["homeassistant"], auto="on", linked_notes=False, rollback_files=(), breaking_marker="(breaking-change)", breaking_names="[{} docs]")
 
     def update(self, line: str, judge: auto.Judge | None = None) -> Outcome:
         outcome = Outcome()
@@ -2831,9 +2847,11 @@ class AutoConfigTests(unittest.TestCase):
     def test_explain_says_what_each_release_does(self):
         hand = "emailed, installed by hand"
         shadow = "emailed with Workers AI's verdict (shadow), installed by hand"
+        asked = "Workers AI is asked: by itself if nothing needs doing by hand, else emailed"
         cases = [
-            ("homeassistant", "2026.11", [("patch", f"by itself, unless its notes mark a breaking change to something in use; then {shadow}"), ("minor", shadow), ("major", shadow)]),
-            ("radarr", "latest", [("patch", "by itself"), ("minor", "by itself"), ("major", "Workers AI is asked: by itself if nothing needs doing by hand, else emailed")]),
+            ("homeassistant", "2026.11.3", [("patch", asked), ("minor", asked), ("major", asked)]),
+            ("zigbee2mqtt", "2.14", [("patch", "by itself"), ("minor", shadow), ("major", shadow)]),
+            ("radarr", "latest", [("patch", "by itself"), ("minor", "by itself"), ("major", asked)]),
             ("traefik", "v3", [("patch", "by itself"), ("minor", "by itself"), ("major", hand)]),
             ("mosquitto", "2.1-alpine", [("patch", "by itself"), ("minor", hand), ("major", hand)]),
             ("adguard", "v0.107.70", [("patch", "by itself"), ("minor", shadow), ("major", hand)]),
@@ -2870,10 +2888,10 @@ class AutoConfigTests(unittest.TestCase):
     def test_a_major_goes_in_by_itself_only_where_config_toml_says_so(self):
         self.assertEqual([key for key, app in APPS.items() if app.auto and app.critical], ["adguard"])
 
-    def test_the_shipped_config_lets_only_the_low_risk_apps_in_by_themselves(self):
+    def test_the_shipped_config_says_which_apps_workers_ai_may_install(self):
         modes = {key: app.auto for key, app in APPS.items() if app.auto}
-        self.assertEqual({key for key, mode in modes.items() if mode == "on"}, {"uptime-kuma", "radarr", "sonarr", "prowlarr", "maintainerr", "seerr"})
-        self.assertEqual({key for key, mode in modes.items() if mode == "shadow"}, {"adguard", "homeassistant", "zigbee2mqtt"})
+        self.assertEqual({key for key, mode in modes.items() if mode == "on"}, {"uptime-kuma", "radarr", "sonarr", "prowlarr", "maintainerr", "seerr", "homeassistant"})
+        self.assertEqual({key for key, mode in modes.items() if mode == "shadow"}, {"adguard", "zigbee2mqtt"})
         self.assertEqual([key for key, app in APPS.items() if app.critical and app.auto == "on"], [])
         for key in ("immich", "traefik", "opencloud-opencloud-1", "mosquitto", "qbittorrent", "beszel", "dockge"):
             self.assertNotIn(key, modes)
